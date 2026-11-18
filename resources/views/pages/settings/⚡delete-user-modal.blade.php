@@ -10,9 +10,10 @@ new class extends Component {
      */
     public function deleteUser(AuthKitAccountDeletionRequest $request): void
     {
-        $request->delete(
-            using: fn (User $user) => $user->delete()
-        );
+        \Illuminate\Support\Facades\DB::transaction(function () use ($request): void {
+            app(\App\Services\Access\AccessControlService::class)->protectLastAdmin($request->user());
+            $request->delete(using: fn (User $user) => $user->delete());
+        });
 
         $this->redirect('/', navigate: true);
     }
@@ -20,6 +21,7 @@ new class extends Component {
 
 <flux:modal name="confirm-user-deletion" :show="$errors->isNotEmpty()" focusable class="max-w-lg">
     <form method="POST" wire:submit="deleteUser" class="space-y-6">
+        <flux:error name="roles" />
         <div>
             <flux:heading size="lg">{{ __('Are you sure you want to delete your account?') }}</flux:heading>
 

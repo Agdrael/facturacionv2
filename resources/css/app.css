@@ -1,38 +1,45 @@
 @import 'tailwindcss';
 @import '../../vendor/livewire/flux/dist/flux.css';
+@import './sales.css';
+@import './catalogs.css';
+@import './access.css';
 
 @source '../views';
 @source '../../vendor/laravel/framework/src/Illuminate/Pagination/resources/views/*.blade.php';
 @source '../../vendor/livewire/flux-pro/stubs/**/*.blade.php';
 @source '../../vendor/livewire/flux/stubs/**/*.blade.php';
 
-@custom-variant dark (&:where(.dark, .dark *));
+@custom-variant dark (&:where(.dark, .dark *):not(:where([data-theme="light"], [data-theme="light"] *)));
 
 @theme {
     --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
 
-    --color-zinc-50: #fafafa;
-    --color-zinc-100: #f5f5f5;
-    --color-zinc-200: #e5e5e5;
-    --color-zinc-300: #d4d4d4;
-    --color-zinc-400: #a3a3a3;
-    --color-zinc-500: #737373;
-    --color-zinc-600: #525252;
-    --color-zinc-700: #404040;
-    --color-zinc-800: #262626;
-    --color-zinc-900: #171717;
-    --color-zinc-950: #0a0a0a;
+    --color-brand-yellow: #ffd600;
+    --color-brand-ink: #1b1b1b;
+    --color-brand-paper: #fffae8;
 
-    --color-accent: var(--color-neutral-800);
-    --color-accent-content: var(--color-neutral-800);
-    --color-accent-foreground: var(--color-white);
+    --color-zinc-50: #fffae8;
+    --color-zinc-100: #f6f1df;
+    --color-zinc-200: #e6e1d0;
+    --color-zinc-300: #cbc6b6;
+    --color-zinc-400: #a39f93;
+    --color-zinc-500: #76746c;
+    --color-zinc-600: #5c5a52;
+    --color-zinc-700: #403f37;
+    --color-zinc-800: #2a2923;
+    --color-zinc-900: #1b1b1b;
+    --color-zinc-950: #111110;
+
+    --color-accent: var(--color-brand-yellow);
+    --color-accent-content: var(--color-brand-ink);
+    --color-accent-foreground: var(--color-brand-ink);
 }
 
 @layer theme {
     .dark {
-        --color-accent: var(--color-white);
-        --color-accent-content: var(--color-white);
-        --color-accent-foreground: var(--color-neutral-800);
+        --color-accent: var(--color-brand-yellow);
+        --color-accent-content: var(--color-brand-yellow);
+        --color-accent-foreground: var(--color-brand-ink);
     }
 }
 
@@ -45,6 +52,21 @@
     ::file-selector-button {
         border-color: var(--color-gray-200, currentColor);
     }
+}
+
+.admin-shell {
+    --color-white: var(--color-brand-paper);
+}
+
+.admin-navigation [data-flux-sidebar-item][data-current] {
+    background-color: var(--color-brand-yellow);
+    border-color: var(--color-brand-yellow);
+    color: var(--color-brand-ink);
+}
+
+.admin-navigation [data-flux-sidebar-item]:focus-visible {
+    outline: 2px solid var(--color-brand-yellow);
+    outline-offset: 3px;
 }
 
 [data-flux-field]:not(ui-radio, ui-checkbox) {

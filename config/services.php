@@ -41,4 +41,12 @@ return [
         'redirect_url' => env('WORKOS_REDIRECT_URL'),
     ],
 
+    'factec' => [
+        'base_url' => env('FACTEC_BASE_URL', 'https://factec.salesianoscentroamerica.org'),
+        'username' => env('FACTEC_USER'),
+        'password' => env('FACTEC_PASSWORD'),
+        'environment' => env('FACTEC_ENVIRONMENT', '00'),
+        'transmission_enabled' => env('FACTEC_TRANSMISSION_ENABLED', false),
+    ],
+
 ];

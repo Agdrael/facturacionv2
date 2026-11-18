@@ -3,39 +3,60 @@
     <head>
         @include('partials.head')
     </head>
-    <body class="min-h-screen bg-white dark:bg-zinc-800">
-        <flux:sidebar sticky collapsible="mobile" class="border-e border-zinc-200 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900">
+    <body class="admin-shell min-h-screen bg-brand-paper text-brand-ink selection:bg-brand-yellow selection:text-brand-ink dark:bg-brand-ink dark:text-brand-paper">
+        <flux:sidebar sticky collapsible="mobile" class="admin-navigation dark border-e border-brand-yellow/20 bg-brand-ink text-brand-paper">
             <flux:sidebar.header>
                 <x-app-logo :sidebar="true" href="{{ route('dashboard') }}" wire:navigate />
                 <flux:sidebar.collapse class="lg:hidden" />
             </flux:sidebar.header>
 
             <flux:sidebar.nav>
-                <flux:sidebar.group :heading="__('Platform')" class="grid">
+                <flux:sidebar.group :heading="__('Administración')" class="grid">
                     <flux:sidebar.item icon="home" :href="route('dashboard')" :current="request()->routeIs('dashboard')" wire:navigate>
-                        {{ __('Dashboard') }}
+                        {{ __('Inicio') }}
                     </flux:sidebar.item>
+                    @canany(['libreria.ventas.ver', 'libreria.cajas.ver'])
+                    <flux:sidebar.group heading="Librería" icon="book-open" expandable :expanded="request()->routeIs('libreria.*')">
+                        @can('libreria.ventas.ver')
+                            <flux:sidebar.item :href="route('libreria.venta')" :current="request()->routeIs('libreria.venta')" wire:navigate>Venta</flux:sidebar.item>
+                        @endcan
+                        @can('libreria.cajas.ver')
+                            <flux:sidebar.item :href="route('libreria.cajas.index')" :current="request()->routeIs('libreria.cajas.*', 'libreria.arqueos.*')" wire:navigate>Caja y arqueos</flux:sidebar.item>
+                        @endcan
+                    </flux:sidebar.group>
+                    @endcanany
+                    @canany(array_values(array_filter(array_keys(config('permissions.catalog')), fn ($code) => str_starts_with($code, 'contaduria.') && str_ends_with($code, '.ver'))))
+<flux:sidebar.group heading="Contaduría" icon="calculator" expandable :expanded="request()->routeIs('contaduria.*')">
+                        <flux:sidebar.item :href="route('contaduria.catalogos')" :current="request()->routeIs('contaduria.catalogos*', 'contaduria.contadores.*')" wire:navigate>
+                            Catálogos
+                        </flux:sidebar.item>
+                    </flux:sidebar.group>
+@endcanany
                 </flux:sidebar.group>
+                <x-admin-sidebar />
             </flux:sidebar.nav>
 
             <flux:spacer />
 
-            <flux:sidebar.nav>
-                <flux:sidebar.item icon="folder-git-2" href="https://github.com/laravel/livewire-starter-kit" target="_blank">
-                    {{ __('Repository') }}
-                </flux:sidebar.item>
+            <div class="flex flex-col gap-3 border-t border-brand-paper/10 px-2 pt-4 text-xs">
+                <div class="flex items-center justify-between gap-3">
+                    <span class="text-brand-paper/60">Facturación</span>
+                    <span class="rounded-full border border-brand-yellow/25 px-2 py-1 text-[10px] font-medium text-brand-yellow">v2.0</span>
+                </div>
+                <div class="flex items-center justify-between gap-3">
+                    <span class="text-brand-paper/60">Punto de venta</span>
+                    <span class="rounded-md bg-brand-yellow/10 px-2 py-1 font-mono font-semibold text-brand-yellow">{{ auth()->user()->puntoventa ?? 'Sin asignar' }}</span>
+                </div>
+            </div>
 
-                <flux:sidebar.item icon="book-open-text" href="https://laravel.com/docs/starter-kits#livewire" target="_blank">
-                    {{ __('Documentation') }}
-                </flux:sidebar.item>
-            </flux:sidebar.nav>
-
-            <x-desktop-user-menu class="hidden lg:block" :name="auth()->user()->name" />
+            <x-desktop-user-menu class="hidden lg:block" />
         </flux:sidebar>
 
         <!-- Mobile User Menu -->
-        <flux:header class="lg:hidden">
+        <flux:header class="dark border-b border-brand-yellow/20 bg-brand-ink text-brand-paper lg:hidden">
             <flux:sidebar.toggle class="lg:hidden" icon="bars-2" inset="left" />
+
+            <x-app-logo href="{{ route('dashboard') }}" wire:navigate />
 
             <flux:spacer />
 
