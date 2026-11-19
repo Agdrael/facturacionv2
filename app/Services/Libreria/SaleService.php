@@ -58,7 +58,7 @@ class SaleService
                 $debitAccount = $data['document']['account'];
                 if ($data['operation'] === '2') {
                     $debitAccount = (string) $client->getAttribute('cuenta_contable');
-                    if (! $client->getAttribute('credito') || $debitAccount === '' || ! DB::table('public.catalogo_contabilidad')->where('cuenta', $debitAccount)->exists()) {
+                    if (! $client->getAttribute('credito') || $debitAccount === '' || ! DB::table('public.catalogo_contabilidad')->where('cuenta', $debitAccount)->exists() || $debitAccount === '110204010122') {
                         throw ValidationException::withMessages(['operation' => 'El cliente debe tener crédito autorizado y una cuenta contable válida.']);
                     }
                 }

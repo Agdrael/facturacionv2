@@ -21,8 +21,12 @@ beforeEach(function () {
 function createTransmittableDte(TestCase $test): int
 {
     prepareDteGeneration($test);
-
-    return $test->postJson(route('libreria.ventas.store'), dteSalePayload())->assertCreated()->json('id');
+    config(['services.factec.transmission_enabled' => false]);
+    try {
+        return $test->postJson(route('libreria.ventas.store'), dteSalePayload())->assertCreated()->json('id');
+    } finally {
+        config(['services.factec.transmission_enabled' => true]);
+    }
 }
 
 test('a test DTE transmits its own metadata and is confirmed without changing platform balances', function () {

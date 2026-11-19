@@ -155,8 +155,14 @@ export function createSaleWorkspace(options = {}) {
             return Math.round(this.lineSubtotal(item) * Math.min(100, Math.max(0, Number(item.discount) || 0)) / 100);
         },
 
+        lineGeneralDiscount(item) {
+            if (!this.canDiscount(item)) return 0;
+            const amount = this.lineSubtotal(item) - this.lineDiscount(item);
+            return Math.round(amount * Math.min(100, Math.max(0, Number(this.document.discount) || 0)) / 100);
+        },
+
         lineTotal(item) {
-            return this.lineSubtotal(item) - this.lineDiscount(item);
+            return this.lineSubtotal(item) - this.lineDiscount(item) - this.lineGeneralDiscount(item);
         },
 
         get subtotal() {
@@ -165,7 +171,7 @@ export function createSaleWorkspace(options = {}) {
 
         get discount() {
             const lineDiscounts = this.items.reduce((total, item) => total + this.lineDiscount(item), 0);
-            const discountable = this.items.filter(item => this.canDiscount(item)).reduce((sum, item) => sum + this.lineTotal(item), 0);
+            const discountable = this.items.filter(item => this.canDiscount(item)).reduce((sum, item) => sum + this.lineSubtotal(item) - this.lineDiscount(item), 0);
             return lineDiscounts + Math.round(discountable * Math.min(100, Math.max(0, Number(this.document.discount) || 0)) / 100);
         },
 

@@ -44,7 +44,12 @@ function acceptedSaleForInvalidation(TestCase $test, string $environment = '00',
         $input['client']['id'] = 2;
         $input['client'] = [...$input['client'], 'documentType' => '36', 'document' => '0614-000000-000-0', 'nrc' => '1234567', 'activity' => '12345', 'department' => '05', 'municipality' => '01', 'district' => '96', 'address' => 'Dirección de prueba'];
     }
-    $id = $test->postJson(route('libreria.ventas.store'), $input)->assertCreated()->json('id');
+    config(['services.factec.transmission_enabled' => false]);
+    try {
+        $id = $test->postJson(route('libreria.ventas.store'), $input)->assertCreated()->json('id');
+    } finally {
+        config(['services.factec.transmission_enabled' => true]);
+    }
     DB::table('libreria.venta_dtes')->where('id', $id)->update(['transmision_estado' => $environment === '00' ? 'ACEPTADO_PRUEBA' : 'ACEPTADO', 'sello_recepcion' => str_repeat('A', 40)]);
     $remote->table('public.dte_json')->update(['procesado' => true, 'respuesta_hacienda' => 'Respuesta original conservada']);
 

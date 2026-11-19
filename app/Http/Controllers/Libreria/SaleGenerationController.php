@@ -15,6 +15,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Validation\ValidationException;
 use stdClass;
 use Throwable;
 
@@ -28,20 +29,22 @@ class SaleGenerationController extends Controller
         return response()->json(['total' => $quote['total']]);
     }
 
-    public function store(StoreSaleRequest $request, SaleService $sales, DteStorageService $storage): JsonResponse
+    public function store(StoreSaleRequest $request, SaleService $sales, DteStorageService $storage, DteTransmissionService $transmitter): JsonResponse
     {
+        Gate::authorize('libreria.ventas.transmitir');
         $user = $request->user();
         abort_unless($user instanceof User, 403);
         $id = $sales->generate($request->validated(), $user);
 
-        return $this->saveResponse($id, $storage);
+        return $this->saveResponse($id, $storage, $transmitter);
     }
 
-    public function retry(Request $request, int $journal, DteStorageService $storage): JsonResponse
+    public function retry(Request $request, int $journal, DteStorageService $storage, DteTransmissionService $transmitter): JsonResponse
     {
         $this->owned($request, $journal);
+        Gate::authorize('libreria.ventas.transmitir');
 
-        return $this->saveResponse($journal, $storage);
+        return $this->saveResponse($journal, $storage, $transmitter);
     }
 
     public function transmit(Request $request, int $journal, DteTransmissionService $transmitter): JsonResponse
@@ -60,8 +63,8 @@ class SaleGenerationController extends Controller
 
     public function history(Request $request): JsonResponse
     {
-        $canRetry = $request->user()->can('libreria.ventas.reintentar');
         $canTransmit = $request->user()->can('libreria.ventas.transmitir');
+        $canRetry = $canTransmit && $request->user()->can('libreria.ventas.reintentar');
         $canDownload = $request->user()->can('libreria.ventas.descargar');
         $rows = DB::table('libreria.venta_dtes as dte')->join('libreria.ventas as venta', 'venta.id', '=', 'dte.venta_id')
             ->leftJoin('libreria.venta_invalidaciones as invalidacion', 'invalidacion.venta_dte_id', '=', 'dte.id')
@@ -93,12 +96,19 @@ class SaleGenerationController extends Controller
         return $row;
     }
 
-    private function saveResponse(int $id, DteStorageService $storage): JsonResponse
+    private function saveResponse(int $id, DteStorageService $storage, DteTransmissionService $transmitter): JsonResponse
     {
+        $transmissionMessage = null;
         try {
             $storage->save($id);
+            if (config('services.factec.transmission_enabled')) {
+                $transmissionMessage = $transmitter->transmit($id)['message'];
+            }
+        } catch (ValidationException $error) {
+            $transmissionMessage = 'DTE registrado. No se completó la transmisión: '.collect($error->errors())->flatten()->implode(' ');
         } catch (Throwable $error) {
             report($error);
+            $transmissionMessage = 'DTE registrado. No se pudo confirmar la transmisión; revisa su estado en el historial sin repetir la venta.';
         }
         $row = DB::table('libreria.venta_dtes')->where('id', $id)->first();
         abort_if($row === null, 404);
@@ -110,7 +120,7 @@ class SaleGenerationController extends Controller
             'invalidationState' => $invalidation?->estado,
             'transmitUrl' => route('libreria.ventas.transmit', $id), 'transmissionState' => $row->transmision_estado, 'seal' => $row->sello_recepcion,
             'retryUrl' => route('libreria.ventas.retry', $id), 'downloadUrl' => route('libreria.ventas.download', $id),
-            'message' => $invalidation !== null ? 'Este DTE tiene una solicitud de invalidación. Consulta su estado desde el historial.' : ($row->guardado_externo_at === null ? 'DTE generado. Falta copiar el JSON a la otra conexión; puedes reintentar sin duplicar la venta.' : (config('services.factec.transmission_enabled') ? 'DTE generado y JSON guardado. Puedes transmitirlo desde esta ventana o desde el historial.' : 'DTE generado y JSON guardado. La transmisión está pendiente de configurar la dirección de pruebas de FactEC.'))], $row->guardado_externo_at === null ? 202 : 201);
+            'message' => $invalidation !== null ? 'Este DTE tiene una solicitud de invalidación. Consulta su estado desde el historial.' : ($row->guardado_externo_at === null ? 'DTE registrado. Falta completar el guardado; puedes recuperarlo desde el historial sin duplicar la venta.' : ($transmissionMessage ?? (config('services.factec.transmission_enabled') ? 'DTE registrado. Consulta el estado de transmisión en el historial.' : 'DTE registrado. La transmisión está deshabilitada; revisa la configuración de FactEC.')))], $row->guardado_externo_at === null ? 202 : 201);
     }
 
     private function transmissionLabel(string $state): string

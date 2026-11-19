@@ -60,29 +60,36 @@ export function createGenerationState() {
         async generateSale() {
             if (this.generating || this.generated || this.quoteLoading || this.packageAdding || !this.items.length || !this.hasBillingClient) return;
             if (this.requireFiscalClientChange()) return;
-            let ticketWindow = null;
-            try {
-                ticketWindow = globalThis.window?.open?.('about:blank', '_blank') ?? null;
-                if (ticketWindow) ticketWindow.opener = null;
-            } catch {}
             this.generating = true;
             this.requestKey ||= globalThis.crypto.randomUUID();
             const payload = { ...this.generationBase(), requestKey: this.requestKey, total: (this.total / 100).toFixed(2),
                 payments: this.payments.map(payment => ({ method: payment.method, amount: String(payment.amount || '0'), reference: payment.reference || null })) };
             try {
                 this.generated = await this.postGeneration(this.saleCatalogs.generateUrl, payload);
-                try {
-                    if (ticketWindow && this.generated.ticketUrl) ticketWindow.location.replace(this.generated.ticketUrl);
-                    else ticketWindow?.close();
-                } catch { ticketWindow?.close(); }
                 this.$flux.modal('sale-payment').close();
                 this.$flux.modal('sale-generated').show();
             } catch (error) {
-                ticketWindow?.close();
                 this.showGenerationNotice(error.message || 'No se recibió confirmación. Reintenta sin comenzar otra venta o consulta el historial.');
             } finally {
                 this.generating = false;
             }
+        },
+
+        finishSale(printCopy = false) {
+            if (this.generating || !this.generated) return;
+            if (printCopy) {
+                let ticketWindow = null;
+                try {
+                    if (this.generated.ticketUrl) ticketWindow = globalThis.window?.open?.(this.generated.ticketUrl, '_blank') ?? null;
+                    if (ticketWindow) ticketWindow.opener = null;
+                } catch {}
+                if (!ticketWindow) {
+                    this.showGenerationNotice('No se pudo abrir el comprobante. Permite las ventanas emergentes e intenta de nuevo; también puedes obtenerlo desde el historial.');
+                    return;
+                }
+            }
+            this.$flux.modal('sale-generated').close();
+            this.newSale();
         },
 
         async retryDte(url = this.generated?.retryUrl) {

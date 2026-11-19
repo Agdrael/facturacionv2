@@ -96,6 +96,57 @@ test('products marked as incomplete cannot be added through the catalog action',
     assert.deepEqual(workspace.items, []);
 });
 
+test('general discounts apply to existing and newly added eligible products without discounting other products', () => {
+    const workspace = sale();
+    workspace.addProduct(product({ price: 1000, netPrice: '10', taxable: false }));
+    workspace.addProduct(product({ id: 'blocked', productId: 18, price: 500, discountAllowed: false }));
+
+    workspace.document.discount = 20;
+
+    assert.equal(workspace.lineTotal(workspace.items[0]), 800);
+    assert.equal(workspace.lineTotal(workspace.items[1]), 500);
+    assert.equal(workspace.discount, 200);
+    assert.equal(workspace.total, 1300);
+
+    workspace.addProduct(product({ id: 'new', productId: 19, price: 2000 }));
+
+    assert.equal(workspace.lineTotal(workspace.items[2]), 1600);
+    assert.equal(workspace.discount, 600);
+    assert.equal(workspace.total, 2900);
+    assert.equal(workspace.generationBase().document.discount, 20);
+    assert.deepEqual(workspace.generationBase().items.map(item => item.discount), [0, 0, 0]);
+});
+
+test('discounted amounts recalculate after quantity price and discount changes and invalidate previous quotes', async () => {
+    const workspace = sale();
+    workspace.saleCatalogs.quoteUrl = '/quote';
+    workspace.document.discount = 10;
+    workspace.addProduct(product({ priceType: 'V', price: 10000, netPrice: '100', taxable: false }));
+    const line = workspace.items[0];
+    line.discount = 20;
+    workspace.postGeneration = async () => ({ total: '72.00' });
+    await workspace.quoteSale();
+    assert.equal(workspace.total, 7200);
+
+    workspace.document.discount = 25;
+
+    assert.equal(workspace.lineTotal(line), 6000);
+    assert.equal(workspace.total, 6000);
+    line.quantity = 2;
+    assert.equal(workspace.lineTotal(line), 12000);
+    assert.equal(workspace.total, 12000);
+    workspace.changeProductPrice(line, '120');
+    assert.equal(workspace.lineTotal(line), 14400);
+    assert.equal(workspace.total, 14400);
+    line.discount = 0;
+    assert.equal(workspace.lineTotal(line), 18000);
+    assert.equal(workspace.total, 18000);
+    workspace.document.discount = 0;
+    assert.equal(workspace.lineTotal(line), 24000);
+    assert.equal(workspace.discount, 0);
+    assert.equal(workspace.total, 24000);
+});
+
 test('variable sale prices update net and tax inclusive amounts without changing the catalog price', () => {
     const workspace = sale();
     const catalogProduct = product({ priceType: 'V' });

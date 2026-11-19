@@ -97,7 +97,7 @@
             <flux:input label="Cuenta contable" x-model="document.account" maxlength="30" />
             <flux:input label="Descuento general (%)" type="number" min="0" max="100" step="0.01" x-model.number="document.discount" x-on:change="document.discount = Math.min(100, Math.max(0, Number(document.discount) || 0))" />
         </div>
-        <p class="text-xs leading-5 text-zinc-500 dark:text-zinc-400">El descuento general se aplica después de los descuentos por producto.</p>
+        <p class="text-xs leading-5 text-zinc-500 dark:text-zinc-400">El descuento general se aplica después de los descuentos por producto, únicamente a los que lo permiten. Puedes cambiarlo antes o después de agregarlos.</p>
         <div class="flex justify-end border-t border-zinc-200 pt-4 dark:border-brand-paper/10"><flux:modal.close><flux:button variant="primary">Volver a la venta</flux:button></flux:modal.close></div>
     </div>
 </flux:modal>
@@ -139,16 +139,24 @@
                 </dl>
             </aside>
         </div>
-        <div class="flex flex-wrap items-center justify-between gap-3 border-t border-zinc-200 pt-4 dark:border-brand-paper/10"><flux:modal.close><flux:button variant="ghost" icon="arrow-left">Volver al detalle</flux:button></flux:modal.close><flux:button variant="primary" x-on:click="generateSale()" x-bind:disabled="generating || !!generated" icon="document-check"><span x-text="generating ? 'Generando…' : 'Generar DTE'"></span></flux:button></div>
+        @cannot('libreria.ventas.transmitir')<p class="text-sm text-amber-700">Necesitas el permiso de transmitir ventas para emitir el comprobante.</p>@endcannot
+        <div class="flex flex-wrap items-center justify-between gap-3 border-t border-zinc-200 pt-4 dark:border-brand-paper/10"><flux:modal.close><flux:button variant="ghost" icon="arrow-left">Volver al detalle</flux:button></flux:modal.close><flux:button variant="primary" x-on:click="generateSale()" x-bind:disabled="generating || !!generated || {{ auth()->user()->can('libreria.ventas.transmitir') ? 'false' : 'true' }}" icon="document-check"><span x-text="generating ? 'Emitiendo…' : 'Emitir comprobante'"></span></flux:button></div>
     </div>
     </fieldset>
 </flux:modal>
 
 <flux:modal name="sale-generated" data-theme="light" class="w-full max-w-lg">
-    <div class="space-y-5"><flux:heading size="lg">DTE generado</flux:heading><p class="break-all font-mono text-sm" x-text="generated?.number"></p><p class="text-sm leading-6" role="status" x-text="generated?.message"></p><div class="flex flex-wrap gap-3"><a x-show="generated?.ticketUrl" x-bind:href="generated?.ticketUrl" target="_blank" rel="noopener" class="rounded-lg bg-brand-yellow px-4 py-2 text-sm font-semibold text-brand-ink">Imprimir ticket</a>
-@can('libreria.ventas.descargar')<a x-bind:href="generated?.downloadUrl" class="rounded-lg bg-brand-yellow px-4 py-2 text-sm font-semibold text-brand-ink">Descargar JSON</a>@endcan
-@can('libreria.ventas.reintentar')<flux:button x-show="generated && !generated.saved" x-on:click="retryDte()" x-bind:disabled="generating">Reintentar guardado</flux:button>@endcan
-@can('libreria.ventas.transmitir')<flux:button x-show="generated?.saved && !generated?.invalidationState" x-on:click="transmitDte()" x-bind:disabled="generating"><span x-text="generating ? 'Procesando…' : (generated?.transmissionState === 'PENDIENTE' ? 'Transmitir DTE' : 'Consultar respuesta')"></span></flux:button>@endcan<flux:button x-on:click="newSale(); $flux.modal('sale-generated').close()" x-bind:disabled="generating">Nueva venta</flux:button></div></div>
+    <div class="space-y-5">
+        <flux:heading size="lg"><span x-text="['ACEPTADO', 'ACEPTADO_PRUEBA'].includes(generated?.transmissionState) ? 'Comprobante emitido' : 'Venta registrada'"></span></flux:heading>
+        <p class="break-all font-mono text-sm" x-text="generated?.number"></p>
+        <p class="text-sm leading-6" role="status" x-text="generated?.message"></p>
+        <p x-show="generated && !['ACEPTADO', 'ACEPTADO_PRUEBA'].includes(generated.transmissionState)" class="text-sm text-amber-700">El DTE aún no está aceptado. Revisa su estado desde el historial sin repetir la venta.</p>
+        <p class="text-sm font-semibold">¿Deseas una copia del comprobante?</p>
+        <div class="flex flex-wrap justify-end gap-3">
+            <flux:button x-on:click="finishSale()" x-bind:disabled="generating">No, continuar</flux:button>
+            <flux:button variant="primary" x-on:click="finishSale(true)" x-bind:disabled="generating || !generated?.ticketUrl">Sí, abrir copia</flux:button>
+        </div>
+    </div>
 </flux:modal>
 <x-catalog-notice name="sale-generation-notice" title="Información de la venta"><p class="whitespace-pre-line" x-text="generationNotice"></p></x-catalog-notice>
 

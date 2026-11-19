@@ -58,6 +58,57 @@ test('a failed network request can be repeated with the same key and payload', a
     assert.equal(state.generating, false);
 });
 
+test('issuing a sale does not open a ticket and declining the copy starts another sale without a second request', async t => {
+    const state = sale();
+    const originalOpen = window.open;
+    t.after(() => { window.open = originalOpen; });
+    let opened = 0; let requests = 0;
+    window.open = () => { opened++; return {}; };
+    state.postGeneration = async () => { requests++; return { id: 7, transmissionState: 'ACEPTADO_PRUEBA', seal: 'SEAL', ticketUrl: '/ticket/7' }; };
+
+    await state.generateSale();
+
+    assert.equal(opened, 0);
+    assert.equal(state.generated.seal, 'SEAL');
+    assert.equal(state.items.length, 1);
+    state.finishSale();
+    assert.equal(opened, 0);
+    assert.equal(requests, 1);
+    assert.equal(state.generated, null);
+    assert.equal(state.items.length, 0);
+});
+
+test('requesting a copy opens the registered ticket and never generates or transmits the sale again', async t => {
+    const state = sale();
+    const originalOpen = window.open;
+    t.after(() => { window.open = originalOpen; });
+    const opened = []; const ticketWindow = { opener: {} };
+    window.open = (...args) => { opened.push(args); return ticketWindow; };
+    state.generated = { id: 7, ticketUrl: '/ticket/7', seal: 'SEAL' };
+    state.postGeneration = async () => { assert.fail('Printing must not issue another sale'); };
+
+    state.finishSale(true);
+
+    assert.deepEqual(opened, [['/ticket/7', '_blank']]);
+    assert.equal(ticketWindow.opener, null);
+    assert.equal(state.generated, null);
+    assert.equal(state.items.length, 0);
+});
+
+test('a blocked ticket popup preserves the registered sale so the copy can be retried', async t => {
+    const state = sale();
+    const originalOpen = window.open;
+    t.after(() => { window.open = originalOpen; });
+    window.open = () => null;
+    state.generated = { id: 7, ticketUrl: '/ticket/7' };
+
+    state.finishSale(true);
+
+    assert.equal(state.generated.id, 7);
+    assert.equal(state.items.length, 1);
+    assert.match(state.notice, /ventanas emergentes/);
+});
+
 test('credit fiscal cannot be generated with a renamed default client', async () => {
     const state = sale();
     state.saleCatalogs.defaultClient = { id: 1 };

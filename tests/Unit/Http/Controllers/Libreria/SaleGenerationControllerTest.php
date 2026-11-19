@@ -3,6 +3,8 @@
 use App\Models\User;
 use App\Services\Libreria\SaleTicketService;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 require_once __DIR__.'/../../../../Fixtures/DteDatabase.php';
@@ -11,7 +13,9 @@ uses(TestCase::class);
 
 beforeEach(function () {
     config(['database.default' => 'sqlite', 'database.connections.sqlite' => ['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => '', 'foreign_key_constraints' => false],
-        'database.connections.dtesantacecilia' => ['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => '']]);
+        'database.connections.dtesantacecilia' => ['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => ''],
+        'services.factec.transmission_enabled' => false]);
+    Http::preventStrayRequests();
     DB::purge('sqlite');
     DB::purge('dtesantacecilia');
     $this->withoutVite();
@@ -22,6 +26,51 @@ test('guests cannot generate download or retry a DTE', function () {
     $this->postJson(route('libreria.ventas.store'), dteSalePayload())->assertUnauthorized();
     $this->postJson(route('libreria.ventas.retry', 1))->assertUnauthorized();
     $this->getJson(route('libreria.ventas.download', 1))->assertUnauthorized();
+});
+
+test('issuing a sale automatically transmits once and returns its seal without another operator action', function () {
+    prepareDteGeneration($this);
+    config(['services.factec.transmission_enabled' => true, 'services.factec.environment' => '00',
+        'services.factec.base_url' => 'https://factec.example.test', 'services.factec.username' => 'test-user', 'services.factec.password' => 'test-password']);
+    Http::fake(['https://factec.example.test/api/login/' => Http::response(['token' => 'fake-token']),
+        'https://factec.example.test/api/hacienda/' => fn ($request) => Http::response(['status' => 'OK', 'body' => ['estado' => 'PROCESADO',
+            'codigoGeneracion' => $request['codigo_generacion'], 'ambiente' => '00', 'selloRecibido' => 'AUTO-SEAL']])]);
+
+    $result = $this->postJson(route('libreria.ventas.store'), dteSalePayload())->assertCreated()
+        ->assertJsonPath('transmissionState', 'ACEPTADO_PRUEBA')->assertJsonPath('seal', 'AUTO-SEAL');
+    $this->postJson(route('libreria.ventas.store'), dteSalePayload())->assertCreated()->assertJsonPath('uuid', $result->json('uuid'));
+
+    Http::assertSentCount(2);
+    $this->assertDatabaseCount('libreria.ventas', 1);
+    $this->assertDatabaseCount('inv.inv_documentos', 1);
+    $this->assertDatabaseHas('libreria.venta_dtes', ['id' => $result->json('id'), 'transmision_estado' => 'ACEPTADO_PRUEBA', 'sello_recepcion' => 'AUTO-SEAL']);
+});
+
+test('an uncertain automatic transmission preserves the sale and does not resend a repeated generation request', function () {
+    prepareDteGeneration($this);
+    config(['services.factec.transmission_enabled' => true, 'services.factec.environment' => '00',
+        'services.factec.base_url' => 'https://factec.example.test', 'services.factec.username' => 'test-user', 'services.factec.password' => 'test-password']);
+    Http::fake(['https://factec.example.test/api/login/' => Http::response(['token' => 'fake-token']),
+        'https://factec.example.test/api/hacienda/' => Http::failedConnection()]);
+
+    $this->postJson(route('libreria.ventas.store'), dteSalePayload())->assertCreated()
+        ->assertJsonPath('saved', true)->assertJsonPath('transmissionState', 'REVISION')->assertJsonPath('seal', null);
+    $this->postJson(route('libreria.ventas.store'), dteSalePayload())->assertCreated()->assertJsonPath('transmissionState', 'REVISION');
+
+    Http::assertSentCount(2);
+    $this->assertDatabaseCount('libreria.ventas', 1);
+    $this->assertDatabaseCount('inv.inv_documentos', 1);
+});
+
+test('issuing without transmission permission is forbidden before registering a sale', function () {
+    prepareDteGeneration($this);
+    Gate::define('libreria.ventas.transmitir', fn (): bool => false);
+
+    $this->postJson(route('libreria.ventas.store'), dteSalePayload())->assertForbidden();
+
+    $this->assertDatabaseCount('libreria.ventas', 0);
+    $this->assertDatabaseCount('inv.inv_documentos', 0);
+    Http::assertNothingSent();
 });
 
 test('generated invoices provide a private printable PDF ticket with the original Hacienda consultation data', function () {

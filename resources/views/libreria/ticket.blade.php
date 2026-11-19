@@ -11,7 +11,6 @@
 @php
     $id = $document['identificacion'];
     $emitter = $document['emisor'];
-    $client = $document['receptor'];
     $summary = $document['resumen'];
 @endphp
 <h1>{{ $emitter['nombreComercial'] ?? $emitter['nombre'] }}</h1>
@@ -21,16 +20,8 @@
 <p class="center small">{{ $emitter['telefono'] ?? '' }} · {{ $emitter['correo'] ?? '' }}</p>
 <h2>{{ $id['tipoDte'] === '03' ? 'COMPROBANTE DE CRÉDITO FISCAL' : 'FACTURA' }} ELECTRÓNICA</h2>
 @if ($id['ambiente'] !== '01')<p class="center"><strong>AMBIENTE DE PRUEBAS</strong></p>@endif
-<p class="small"><strong>N.º control:</strong><br>{{ $id['numeroControl'] }}</p>
-<p class="small"><strong>Código de generación:</strong><br>{{ $id['codigoGeneracion'] }}</p>
-<p class="small"><strong>Emisión:</strong> {{ $id['fecEmi'] }} {{ $id['horEmi'] }}<br><strong>Caja:</strong> {{ $emitter['codPuntoVenta'] ?? '' }}</p>
-<p class="small"><strong>Estado DTE:</strong> {{ $journal->transmision_estado }}<br><strong>Sello:</strong> {{ $journal->sello_recepcion ?: 'Pendiente de recepción' }}</p>
 @if ($journal->anulado ?? false)<h2>DOCUMENTO ANULADO</h2>@endif
-<p><strong>Cliente:</strong> {{ $client['nombre'] ?? 'Clientes varios' }}</p>
-@if ($client['nit'] ?? $client['numDocumento'] ?? null)<p class="small"><strong>Documento:</strong> {{ $client['nit'] ?? $client['numDocumento'] }}</p>@endif
-@if ($client['nrc'] ?? null)<p class="small"><strong>NRC:</strong> {{ $client['nrc'] }}</p>@endif
-@if ($client['direccion']['complemento'] ?? null)<p class="small">{{ $client['direccion']['complemento'] }}</p>@endif
-<p class="small">{{ $client['correo'] ?? '' }}</p>
+<p class="center"><br><img src="{{ '@'.$qrImage }}" width="40mm" height="40mm" /><br></p>
 <table width="100%" cellpadding="2">
     <thead><tr><th width="68%">Descripción</th><th width="32%" align="right">Importe</th></tr></thead>
     <tbody>
