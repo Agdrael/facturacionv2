@@ -55,9 +55,6 @@
                         <flux:button size="xs" icon="shopping-bag" x-on:click="openCatalog('productos')">Productos / Servicios</flux:button>
                         <flux:button size="xs" icon="academic-cap" x-on:click="openTuition()">Matrícula / Colegiatura</flux:button>
                         <flux:button size="xs" icon="squares-2x2" x-on:click="openCatalog('paquetes')">Paquetes</flux:button>
-                        <div class="ms-auto w-44">
-                            <flux:input size="sm" label="Descuento general (%)" type="number" min="0" max="100" step="0.01" x-model.number="document.discount" x-on:change="document.discount = Math.min(100, Math.max(0, Number(document.discount) || 0))" />
-                        </div>
                     </div>
                 </div>
 
@@ -86,10 +83,7 @@
                                         </template>
                                     </td>
                                     <td class="text-center"><input class="sale-number w-14!" type="number" min="0" max="100" step="0.01" x-model.number="item.discount" x-bind:readonly="!canDiscount(item)" :aria-label="`Descuento de ${item.name}`" x-on:change="item.discount = canDiscount(item) ? Math.min(100, Math.max(0, Number(item.discount) || 0)) : 0" /></td>
-                                    <td class="text-right text-[13px] font-semibold tabular-nums">
-                                        <span x-text="money(lineTotal(item))"></span>
-                                        <span x-show="lineGeneralDiscount(item) > 0" class="mt-1 block text-[10px] font-normal text-zinc-500 dark:text-zinc-400" x-text="`General: − ${money(lineGeneralDiscount(item))}`"></span>
-                                    </td>
+                                    <td class="text-right text-[13px] font-semibold tabular-nums" x-text="money(lineTotal(item))"></td>
                                     <td class="w-10"><flux:button size="xs" variant="ghost" icon="x-mark" x-on:click="removeProduct(item.id)" x-bind:aria-label="`Quitar ${item.name}`" /></td>
                                 </tr>
                             </template>

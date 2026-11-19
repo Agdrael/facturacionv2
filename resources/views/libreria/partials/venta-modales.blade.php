@@ -97,7 +97,7 @@
             <flux:input label="Cuenta contable" x-model="document.account" maxlength="30" />
             <flux:input label="Descuento general (%)" type="number" min="0" max="100" step="0.01" x-model.number="document.discount" x-on:change="document.discount = Math.min(100, Math.max(0, Number(document.discount) || 0))" />
         </div>
-        <p class="text-xs leading-5 text-zinc-500 dark:text-zinc-400">El descuento general se aplica después de los descuentos por producto, únicamente a los que lo permiten. Puedes cambiarlo antes o después de agregarlos.</p>
+        <p class="text-xs leading-5 text-zinc-500 dark:text-zinc-400">El descuento general se aplica después de los descuentos por producto.</p>
         <div class="flex justify-end border-t border-zinc-200 pt-4 dark:border-brand-paper/10"><flux:modal.close><flux:button variant="primary">Volver a la venta</flux:button></flux:modal.close></div>
     </div>
 </flux:modal>
