@@ -3,6 +3,7 @@
 namespace App\Services\Libreria;
 
 use App\Models\Libreria\CashSession;
+use App\Models\Libreria\Receipt;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
 use Illuminate\Support\Facades\DB;
@@ -54,13 +55,51 @@ class CashSnapshotService
                 'receivable' => (string) $balance->toScale(2, RoundingMode::HalfUp), 'dteState' => $row->transmision_estado,
                 'references' => array_values(array_filter(array_map(fn (array $payment): ?string => empty($payment['reference']) ? null : (string) $payment['reference'], $payments['received'])))];
         }
+        $receiptRows = [];
+        $receiptTotal = 0;
+        $receiptCategories = [];
+        if (config('receipts.enabled')) {
+            $receipts = Receipt::query()->where('cash_session_id', $session->id)->where('status', '!=', 'ANULADO')->orderBy('id')->get();
+            $payments = DB::table('libreria.receipt_payments')->whereIn('receipt_id', $receipts->modelKeys())->get()->groupBy('receipt_id');
+            $details = DB::table('libreria.receipt_lines')->whereIn('receipt_id', $receipts->modelKeys())->get()->groupBy('receipt_id');
+            foreach ($receipts as $receipt) {
+                $net = [];
+                $references = [];
+                foreach ($payments->get($receipt->id, collect()) as $payment) {
+                    $net[$payment->method] = ($net[$payment->method] ?? 0) + ReceiptMoney::cents($payment->amount);
+                    if ($payment->reference) {
+                        $references[] = $payment->reference;
+                    }
+                }
+                if (ReceiptMoney::cents($receipt->change) > 0) {
+                    $net['01'] = ($net['01'] ?? 0) - ReceiptMoney::cents($receipt->change);
+                }
+                foreach ($net as $method => $cents) {
+                    if ($cents < 0) {
+                        throw new RuntimeException('El cambio del recibo excede su efectivo.');
+                    }
+                    $methods[$method] = (string) BigDecimal::of($methods[$method] ?? '0')->plus(ReceiptMoney::decimal($cents))->toScale(2);
+                    $net[$method] = ReceiptMoney::decimal($cents);
+                }
+                $kinds = [];
+                foreach ($details->get($receipt->id, collect()) as $detail) {
+                    $receiptCategories[$detail->kind] = ($receiptCategories[$detail->kind] ?? 0) + ReceiptMoney::cents($detail->amount);
+                    $kinds[] = $detail->kind;
+                }
+                $receiptTotal += ReceiptMoney::cents($receipt->total);
+                $receiptRows[] = ['receiptId' => $receipt->id, 'number' => $receipt->number(), 'client' => $receipt->recipient_name, 'operator' => $receipt->operator_name,
+                    'state' => $receipt->status, 'total' => $receipt->total, 'payments' => $net, 'references' => $references, 'kinds' => array_values(array_unique($kinds))];
+            }
+        }
         ksort($methods);
 
-        return ['version' => 1, 'sessionId' => (int) $session->id, 'register' => $session->register->codigo,
+        return ['version' => config('receipts.enabled') ? 2 : 1, 'sessionId' => (int) $session->id, 'register' => $session->register->codigo,
             'date' => $session->fecha_operativa->toDateString(), 'openedAt' => $session->abierto_at->setTimezone(config('cash.timezone'))->toIso8601String(),
             'closedAt' => $session->cerrado_at->setTimezone(config('cash.timezone'))->toIso8601String(),
             'openedBy' => $session->abierto_nombre, 'closedBy' => $session->cerrado_nombre,
             'total' => (string) $total->toScale(2, RoundingMode::HalfUp), 'receivable' => (string) $receivable->toScale(2, RoundingMode::HalfUp),
-            'methods' => $methods, 'documents' => $documents, 'sales' => $lines];
+            'methods' => $methods, 'documents' => $documents, 'sales' => $lines,
+            'receipts' => $receiptRows, 'receiptTotal' => ReceiptMoney::decimal($receiptTotal), 'receiptCategories' => array_map(ReceiptMoney::decimal(...), $receiptCategories),
+            'collections' => (string) array_reduce($methods, fn (BigDecimal $sum, $value) => $sum->plus($value), BigDecimal::zero())->toScale(2)];
     }
 }

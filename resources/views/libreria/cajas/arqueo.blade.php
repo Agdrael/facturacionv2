@@ -4,7 +4,7 @@
         @if (session('status'))<flux:callout variant="success">{{ session('status') }}</flux:callout>@endif
         @if ($errors->any())<flux:callout variant="danger"><ul class="list-disc ps-4">@foreach ($errors->all() as $message)<li>{{ $message }}</li>@endforeach</ul></flux:callout>@endif
         @if ($incidents->isNotEmpty())
-            <flux:callout variant="warning"><flux:callout.heading>Invalidaciones posteriores al cierre</flux:callout.heading><flux:callout.text>El arqueo conserva sus importes originales. Estas invalidaciones no registran una devolución automática de dinero.</flux:callout.text><ul class="mt-3 space-y-1 text-xs">@foreach ($incidents as $incident)<li class="break-all font-mono">{{ $incident->numero_control }}</li>@endforeach</ul></flux:callout>
+            <flux:callout variant="warning"><flux:callout.heading>Incidencias posteriores al cierre</flux:callout.heading><flux:callout.text>El arqueo conserva sus importes originales. Las invalidaciones de DTE y anulaciones de recibos no registran una devolución automática de dinero.</flux:callout.text><ul class="mt-3 space-y-1 text-xs">@foreach ($incidents as $incident)<li class="break-all font-mono">{{ $incident->numero_control }}</li>@endforeach</ul></flux:callout>
         @endif
         <div class="grid gap-3 sm:grid-cols-3">
             <div class="access-stat"><div><p class="access-label">Total documentos</p><p class="access-stat-value mt-2">${{ number_format((float) $record->snapshot['total'], 2) }}</p></div></div>
@@ -12,6 +12,9 @@
             <div class="access-stat"><div><p class="access-label">Saldo por cobrar</p><p class="access-stat-value mt-2">${{ number_format((float) $record->snapshot['receivable'], 2) }}</p></div></div>
         </div>
         <div class="grid items-start gap-5 xl:grid-cols-2">
+            @if (($record->snapshot['version'] ?? 1) >= 2)
+                <section class="access-panel p-5 xl:col-span-2"><h2 class="font-semibold">Cobros por recibo</h2><dl class="mt-3 flex flex-wrap gap-6 text-sm"><div><dt class="access-muted">Total recibos</dt><dd class="mt-1 font-semibold tabular-nums">${{ number_format((float) ($record->snapshot['receiptTotal'] ?? 0), 2) }}</dd></div><div><dt class="access-muted">Ingresos netos de todos los medios</dt><dd class="mt-1 font-semibold tabular-nums">${{ number_format((float) ($record->snapshot['collections'] ?? 0), 2) }}</dd></div></dl><p class="access-muted mt-3 text-xs">Los abonos a CXC se muestran como cobros, separados de la venta que originó la deuda.</p></section>
+            @endif
             <section class="access-panel space-y-5 p-5">
                 <div><h2 class="font-semibold">1. Completar y entregar Excel</h2><p class="access-muted mt-2 text-xs leading-6">Descarga el original y completa efectivo contado, remesas y observaciones. Conserva las hojas y los totales del sistema.</p></div>
                 @can('libreria.arqueos.descargar')<flux:button :href="route('libreria.arqueos.download', [$record->id, 'original'])" icon="arrow-down-tray">Descargar original</flux:button>@endcan
@@ -70,5 +73,8 @@
                 @forelse ($record->snapshot['sales'] as $sale)<tr><td class="max-w-64 break-all font-mono text-[10px]">{{ $sale['number'] }}</td><td><p>{{ $sale['client'] }}</p><p class="access-muted mt-1 text-xs">{{ $sale['operator'] }}</p></td><td>{{ $sale['dteState'] }}</td><td class="tabular-nums">${{ number_format((float) $sale['total'], 2) }}</td></tr>@empty<tr><td colspan="4" class="access-muted py-8! text-center">La sesión no registró ventas vigentes.</td></tr>@endforelse
             </tbody></table></div>
         </section>
+        @if (! empty($record->snapshot['receipts']))
+            <section class="access-panel overflow-hidden"><div class="access-panel-heading"><h2 class="font-semibold">Recibos al cierre</h2><span class="access-badge">{{ count($record->snapshot['receipts']) }} recibos</span></div><div class="overflow-x-auto"><table class="access-user-table"><thead><tr><th>Recibo</th><th>Destinatario / operador</th><th>Estado al cierre</th><th>Total</th></tr></thead><tbody>@foreach ($record->snapshot['receipts'] as $receipt)<tr><td class="font-mono text-xs">{{ $receipt['number'] }}</td><td><p>{{ $receipt['client'] }}</p><p class="access-muted mt-1 text-xs">{{ $receipt['operator'] }}</p></td><td>{{ $receipt['state'] }}</td><td class="tabular-nums">${{ number_format((float) $receipt['total'], 2) }}</td></tr>@endforeach</tbody></table></div></section>
+        @endif
     </div>
 </x-layouts::app>

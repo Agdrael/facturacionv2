@@ -30,7 +30,7 @@ function prepareCashControl(TestCase $test, string $point = 'P001'): User
     config(['database.default' => 'sqlite',
         'database.connections.sqlite' => ['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => '', 'foreign_key_constraints' => false],
         'database.connections.dtesantacecilia' => ['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => ''],
-        'employee-access.allowed_domain' => 'example.test']);
+        'employee-access.allowed_domain' => 'example.test', 'services.factec.transmission_enabled' => false, 'receipts.enabled' => false]);
     DB::purge('sqlite');
     DB::purge('dtesantacecilia');
     $test->travelTo(CarbonImmutable::parse('2026-11-11 10:00:00', 'America/El_Salvador'));
@@ -246,6 +246,6 @@ test('later invalidations appear as incidents without changing the closed snapsh
     $snapshot = $record->snapshot;
     DB::table('libreria.venta_invalidaciones')->insert(['venta_dte_id' => 1, 'aplicada_at' => now()->addMinute()->toDateTimeString()]);
     DB::table('libreria.ventas')->where('id', 1)->update(['estado' => 'ANULADO']);
-    $this->get(route('libreria.arqueos.show', $record->id))->assertOk()->assertSee('Invalidaciones posteriores al cierre');
+    $this->get(route('libreria.arqueos.show', $record->id))->assertOk()->assertSee('Incidencias posteriores al cierre');
     expect($record->fresh()->snapshot)->toBe($snapshot);
 });

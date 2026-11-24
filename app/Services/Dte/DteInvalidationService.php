@@ -2,6 +2,7 @@
 
 namespace App\Services\Dte;
 
+use App\Services\Libreria\ReceiptCreditService;
 use App\Services\Libreria\SaleReversalService;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
@@ -13,7 +14,7 @@ use Throwable;
 
 class DteInvalidationService
 {
-    public function __construct(private FactEcClient $client, private SaleReversalService $reversal, private DteProcessLockService $lock) {}
+    public function __construct(private FactEcClient $client, private SaleReversalService $reversal, private DteProcessLockService $lock, private ReceiptCreditService $credits) {}
 
     /** @param array<string, mixed> $data */
     public function prepare(int $journalId, array $data, int $userId): void
@@ -23,6 +24,9 @@ class DteInvalidationService
         $this->lock->run($journalId, function () use ($journalId, $data, $userId, $hash): void {
             DB::transaction(function () use ($journalId, $data, $userId, $hash): void {
                 $journal = $this->journal($journalId);
+                if (config('receipts.enabled')) {
+                    $this->credits->assertNoReceipts($journal->codigo_generacion);
+                }
                 $existing = DB::table('libreria.venta_invalidaciones')->where('venta_dte_id', $journalId)->first();
                 if ($existing !== null) {
                     if (! hash_equals($existing->request_hash, $hash)) {
@@ -37,19 +41,26 @@ class DteInvalidationService
                 if ($replacement !== null) {
                     $other = DB::table('libreria.venta_dtes')->where('codigo_generacion', $replacement)->first();
                     $otherDocument = $other === null ? null : json_decode($other->documento, true, 512, JSON_THROW_ON_ERROR);
-                    if ($other === null || (int) $other->id === $journalId || ! in_array($other->transmision_estado, ['ACEPTADO', 'ACEPTADO_PRUEBA'], true) || empty($other->sello_recepcion)
+                    if (
+                        $other === null || (int) $other->id === $journalId || ! in_array($other->transmision_estado, ['ACEPTADO', 'ACEPTADO_PRUEBA'], true) || empty($other->sello_recepcion)
                         || $otherDocument['identificacion']['ambiente'] !== $document['identificacion']['ambiente']
                         || $otherDocument['identificacion']['tipoDte'] !== $document['identificacion']['tipoDte']
                         || $otherDocument['emisor']['nit'] !== $document['emisor']['nit']
-                        || DB::table('libreria.venta_invalidaciones')->where('venta_dte_id', $other->id)->exists()) {
+                        || DB::table('libreria.venta_invalidaciones')->where('venta_dte_id', $other->id)->exists()
+                    ) {
                         throw ValidationException::withMessages(['replacement' => 'Selecciona un DTE de reemplazo aceptado, del mismo tipo, emisor y ambiente, sin solicitud de invalidación.']);
                     }
                 }
                 $uuid = Str::upper((string) Str::uuid());
                 $event = $this->build($journal, $document, $data, $uuid, $replacement);
                 DB::table('libreria.venta_invalidaciones')->insert([
-                    'venta_dte_id' => $journalId, 'user_id' => $userId, 'codigo_generacion' => $uuid, 'request_hash' => $hash,
-                    'documento' => json_encode($event, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE), 'created_at' => now(), 'updated_at' => now(),
+                    'venta_dte_id' => $journalId,
+                    'user_id' => $userId,
+                    'codigo_generacion' => $uuid,
+                    'request_hash' => $hash,
+                    'documento' => json_encode($event, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE),
+                    'created_at' => now(),
+                    'updated_at' => now(),
                 ]);
             });
         });
@@ -147,14 +158,25 @@ class DteInvalidationService
                 default => 'Consulta la respuesta de la invalidación.',
             });
 
-        return ['id' => $journalId, 'invalidationState' => $event->estado, 'uuid' => $event->codigo_generacion, 'saved' => $event->guardado_externo_at !== null,
-            'applied' => $event->aplicada_at !== null, 'seal' => $event->sello_recepcion, 'message' => $message,
-            'transmitUrl' => route('libreria.ventas.invalidacion.transmit', $journalId), 'downloadUrl' => route('libreria.ventas.invalidacion.download', $journalId)];
+        return [
+            'id' => $journalId,
+            'invalidationState' => $event->estado,
+            'uuid' => $event->codigo_generacion,
+            'saved' => $event->guardado_externo_at !== null,
+            'applied' => $event->aplicada_at !== null,
+            'seal' => $event->sello_recepcion,
+            'message' => $message,
+            'transmitUrl' => route('libreria.ventas.invalidacion.transmit', $journalId),
+            'downloadUrl' => route('libreria.ventas.invalidacion.download', $journalId),
+        ];
     }
 
     /** @param array<string, mixed> $document */
     private function ensureEligible(stdClass $journal, array $document, ?string $eventDate = null): void
     {
+        if (config('receipts.enabled')) {
+            $this->credits->assertNoReceipts($journal->codigo_generacion);
+        }
         $identity = $document['identificacion'];
         $expectedState = $identity['ambiente'] === '00' ? 'ACEPTADO_PRUEBA' : 'ACEPTADO';
         if ($identity['ambiente'] !== config('services.factec.environment') || $journal->transmision_estado !== $expectedState || strlen((string) $journal->sello_recepcion) !== 40) {
@@ -185,19 +207,49 @@ class DteInvalidationService
         $receiver = $document['receptor'];
         $identity = $document['identificacion'];
 
-        return ['identificacion' => ['version' => 3, 'ambiente' => $identity['ambiente'], 'codigoGeneracion' => $uuid,
-            'fecEmi' => $identity['tipoDte'] === '03' ? $identity['fecEmi'] : now('America/El_Salvador')->toDateString(),
-            'horEmi' => now('America/El_Salvador')->format('H:i:s'), 'fusion' => null],
-            'emisor' => ['nit' => $emitter['nit'], 'nombre' => $emitter['nombre'], 'codEstableMH' => $codes[2], 'codEstable' => $emitter['codEstable'],
-                'codPuntoVentaMH' => $codes[3], 'codPuntoVenta' => $emitter['codPuntoVenta'], 'telefono' => $emitter['telefono'], 'correo' => $emitter['correo']],
-            'documento' => ['tipoDte' => $identity['tipoDte'], 'codigoGeneracion' => $identity['codigoGeneracion'], 'selloRecibido' => $journal->sello_recepcion,
-                'numeroControl' => $journal->numero_control, 'fecEmi' => $identity['fecEmi'], 'codigoGeneracionR' => $replacement,
+        return [
+            'identificacion' => [
+                'version' => 3,
+                'ambiente' => $identity['ambiente'],
+                'codigoGeneracion' => $uuid,
+                'fecEmi' => $identity['tipoDte'] === '03' ? $identity['fecEmi'] : now('America/El_Salvador')->toDateString(),
+                'horEmi' => now('America/El_Salvador')->format('H:i:s'),
+                'fusion' => null,
+            ],
+            'emisor' => [
+                'nit' => $emitter['nit'],
+                'nombre' => $emitter['nombre'],
+                'codEstableMH' => $codes[2],
+                'codEstable' => $emitter['codEstable'],
+                'codPuntoVentaMH' => $codes[3],
+                'codPuntoVenta' => $emitter['codPuntoVenta'],
+                'telefono' => $emitter['telefono'],
+                'correo' => $emitter['correo'],
+            ],
+            'documento' => [
+                'tipoDte' => $identity['tipoDte'],
+                'codigoGeneracion' => $identity['codigoGeneracion'],
+                'selloRecibido' => $journal->sello_recepcion,
+                'numeroControl' => $journal->numero_control,
+                'fecEmi' => $identity['fecEmi'],
+                'codigoGeneracionR' => $replacement,
                 'tipoDocumento' => $identity['tipoDte'] === '03' ? '36' : ($receiver['tipoDocumento'] ?? null),
                 'numDocumento' => $identity['tipoDte'] === '03' ? $receiver['nit'] : ($receiver['numDocumento'] ?? null),
-                'nombre' => $receiver['nombre'] ?? null, 'telefono' => $receiver['telefono'] ?? null, 'correo' => $receiver['correo'] ?? null],
-            'motivo' => ['tipoAnulacion' => (int) $data['reasonType'], 'motivoAnulacion' => $data['reason'],
-                'nombreResponsable' => $data['responsibleName'], 'tipDocResponsable' => $data['responsibleType'], 'numDocResponsable' => $data['responsibleDocument'],
-                'nombreSolicita' => $data['requesterName'], 'tipDocSolicita' => $data['requesterType'], 'numDocSolicita' => $data['requesterDocument']]];
+                'nombre' => $receiver['nombre'] ?? null,
+                'telefono' => $receiver['telefono'] ?? null,
+                'correo' => $receiver['correo'] ?? null,
+            ],
+            'motivo' => [
+                'tipoAnulacion' => (int) $data['reasonType'],
+                'motivoAnulacion' => $data['reason'],
+                'nombreResponsable' => $data['responsibleName'],
+                'tipDocResponsable' => $data['responsibleType'],
+                'numDocResponsable' => $data['responsibleDocument'],
+                'nombreSolicita' => $data['requesterName'],
+                'tipDocSolicita' => $data['requesterType'],
+                'numDocSolicita' => $data['requesterDocument'],
+            ],
+        ];
     }
 
     /** @param array{state: string, seal: ?string, message: string} $result */
@@ -206,9 +258,14 @@ class DteInvalidationService
         $event = $this->event($journalId);
         $document = json_decode($event->documento, true, 512, JSON_THROW_ON_ERROR);
         $state = $result['state'] === 'ACEPTADO' && $document['identificacion']['ambiente'] === '00' ? 'ACEPTADO_PRUEBA' : $result['state'];
-        DB::table('libreria.venta_invalidaciones')->where('id', $event->id)->update(['estado' => $state, 'respuesta_api' => $raw === '' ? null : $raw,
-            'sello_recepcion' => $result['seal'], 'error' => $result['state'] === 'ACEPTADO' ? null : $result['message'],
-            'confirmada_at' => $result['state'] === 'ACEPTADO' ? now() : null, 'updated_at' => now()]);
+        DB::table('libreria.venta_invalidaciones')->where('id', $event->id)->update([
+            'estado' => $state,
+            'respuesta_api' => $raw === '' ? null : $raw,
+            'sello_recepcion' => $result['seal'],
+            'error' => $result['state'] === 'ACEPTADO' ? null : $result['message'],
+            'confirmada_at' => $result['state'] === 'ACEPTADO' ? now() : null,
+            'updated_at' => now(),
+        ]);
     }
 
     private function mirrorResponse(int $journalId): void

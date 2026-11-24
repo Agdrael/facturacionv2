@@ -8,6 +8,7 @@ use App\Http\Controllers\Contaduria\DteCounterController;
 use App\Http\Controllers\Contaduria\PackageController;
 use App\Http\Controllers\Libreria\CashReconciliationController;
 use App\Http\Controllers\Libreria\CashRegisterController;
+use App\Http\Controllers\Libreria\ReceiptController;
 use App\Http\Controllers\Libreria\SaleClientController;
 use App\Http\Controllers\Libreria\SaleController;
 use App\Http\Controllers\Libreria\SaleGenerationController;
@@ -90,6 +91,23 @@ Route::middleware([
         Route::post('{journal}/guardar-dte', 'retry')->middleware('can:libreria.ventas.reintentar')->whereNumber('journal')->name('retry');
         Route::post('{journal}/transmitir', 'transmit')->middleware('can:libreria.ventas.transmitir')->whereNumber('journal')->name('transmit');
         Route::get('{journal}/json', 'download')->middleware('can:libreria.ventas.descargar')->whereNumber('journal')->name('download');
+    });
+    Route::prefix('libreria/recibos')->name('libreria.recibos.')->controller(ReceiptController::class)->group(function () {
+        Route::get('/', 'index')->middleware('can:libreria.recibos.ver')->name('index');
+        Route::get('historial', 'history')->middleware('can:libreria.recibos.ver')->name('history');
+        Route::get('personas', 'recipients')->name('recipients');
+        Route::get('deudas', 'debts')->name('debts');
+        Route::get('cxc', 'cxc')->name('cxc');
+        Route::get('preparar', 'prepare')->name('prepare');
+        Route::get('cuentas-clientes', 'clientCxc')->name('client_cxc');
+        Route::post('/', 'store')->middleware('can:libreria.recibos.crear')->name('store');
+        Route::post('conciliar', 'reconcile')->middleware('can:libreria.recibos.conciliar')->name('reconcile');
+        Route::get('creditos', 'credits')->middleware('can:libreria.recibos.conciliar')->name('credits');
+        Route::post('creditos/{journal}', 'registerCredit')->whereNumber('journal')->middleware('can:libreria.recibos.conciliar')->name('credits.register');
+        Route::get('anteriores/{receipt}/ticket', 'legacyTicket')->whereNumber('receipt')->middleware('can:libreria.recibos.descargar')->name('legacy.ticket');
+        Route::get('{receipt}/ticket', 'ticket')->whereNumber('receipt')->middleware('can:libreria.recibos.descargar')->name('ticket');
+        Route::post('{receipt}/reintentar', 'retry')->whereNumber('receipt')->middleware('can:libreria.recibos.reintentar')->name('retry');
+        Route::post('{receipt}/anular', 'annul')->whereNumber('receipt')->middleware('can:libreria.recibos.anular')->name('annul');
     });
     Route::middleware('can:libreria.ventas.crear')->group(function () {
         Route::get('libreria/clientes', SaleClientController::class)->name('libreria.clientes.index');

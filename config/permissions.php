@@ -28,4 +28,8 @@ foreach (['ver' => 'Consultar arqueos de la caja asignada', 'ver_todos' => 'Cons
     $catalog['libreria.arqueos.'.$action] = $description;
 }
 
+foreach (['ver' => 'Consultar recibos propios', 'ver_todos' => 'Consultar recibos de todos los operadores', 'crear' => 'Emitir recibos', 'descargar' => 'Descargar y reimprimir recibos', 'reintentar' => 'Reintentar aplicaciones de recibos', 'conciliar' => 'Vincular y conciliar obligaciones', 'anular' => 'Anular recibos de cualquier operador'] as $action => $description) {
+    $catalog['libreria.recibos.'.$action] = $description;
+}
+
 return ['catalog' => $catalog];

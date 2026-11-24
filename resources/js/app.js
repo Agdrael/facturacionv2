@@ -4,3 +4,4 @@ import './catalog-select';
 import './product-pricing';
 import './contaduria-package';
 import './cash-signature';
+import './libreria-receipts';

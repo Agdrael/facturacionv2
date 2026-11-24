@@ -62,7 +62,7 @@ class User extends Authenticatable
         if (! array_key_exists($code, config('permissions.catalog', []))) {
             return false;
         }
-        if ($code === 'libreria.ventas.invalidar' && ! $this->hasRole(['admin', 'contador'])) {
+        if (in_array($code, ['libreria.ventas.invalidar', 'libreria.recibos.anular', 'libreria.recibos.conciliar'], true) && ! $this->hasRole(['admin', 'contador'])) {
             return false;
         }
 

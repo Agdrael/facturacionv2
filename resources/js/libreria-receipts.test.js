@@ -1,0 +1,186 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+
+globalThis.document = { addEventListener() {}, querySelector: () => ({ content: 'csrf' }) };
+globalThis.window = { location: { origin: 'https://example.test' } };
+const { createReceiptWorkspace } = await import('./libreria-receipts.js');
+
+function workspace() {
+    const state = createReceiptWorkspace({ year: 2026, canCreate: true, recipientsUrl: '/people', storeUrl: '/receipts', prepareUrl: '/prepare',
+        concepts: [{ id: 1, name: 'Constancia', price: '10.00', kind: 'normal', account: '5101' }], methods: [{ codigo: '01', valor: 'Efectivo' }, { codigo: '02', valor: 'Tarjeta' }] });
+    state.$flux = { modal: () => ({ show() {}, close() {} }) };
+    return state;
+}
+
+function normal(state) {
+    state.form.recipient.name = 'Persona sin registro';
+    state.form.conceptId = 1;
+    state.selectConcept();
+    state.exact();
+}
+
+test('one operation retains one concept and several payment methods with cash-only change', () => {
+    const state = workspace();
+    normal(state);
+    state.form.payments = [{ uid: 1, method: '01', amount: '8.00', reference: '' }, { uid: 2, method: '02', amount: '4.00', reference: 'AUTH' }];
+
+    assert.equal(state.total, 1000);
+    assert.equal(state.paid, 1200);
+    assert.equal(state.cash, 800);
+    assert.equal(state.change, 200);
+    assert.equal(state.payload().conceptId, 1);
+    assert.equal(state.payload().account, '5101');
+    assert.equal('recipients' in state.payload(), false);
+    assert.equal('lines' in state.payload(), false);
+    assert.deepEqual(state.payload().payments, [{ method: '01', amount: '8.00', reference: null }, { method: '02', amount: '4.00', reference: 'AUTH' }]);
+    state.reset();
+    assert.equal(state.form.recipient.name, '');
+    assert.equal(state.form.payments.length, 1);
+});
+
+test('an unconfirmed receipt retries the exact request and never opens its PDF automatically', async t => {
+    const state = workspace();
+    normal(state);
+    const calls = [];
+    const originalOpen = window.open;
+    t.after(() => { window.open = originalOpen; });
+    window.open = () => assert.fail('Printing requires an explicit choice');
+    state.api = async (url, body) => {
+        calls.push(structuredClone(body));
+        if (calls.length === 1) throw new Error('Sin confirmación');
+        return { id: 7, ticketUrl: '/receipts/7/ticket' };
+    };
+
+    await state.issue();
+    assert.equal(state.locked, true);
+    state.form.amount = '99.00';
+    await state.issue();
+
+    assert.deepEqual(calls[0], calls[1]);
+    assert.equal(state.completed.id, 7);
+    state.finish();
+    assert.equal(state.form.recipient.name, '');
+    assert.equal(state.submittedPayload, null);
+    assert.equal(calls.length, 2);
+});
+
+test('double submission does not create concurrent requests and validation permits correcting the draft', async () => {
+    const state = workspace();
+    normal(state);
+    let reject; let calls = 0;
+    state.api = async () => { calls++; return new Promise((resolve, fail) => { reject = fail; }); };
+
+    const pending = state.issue();
+    await state.issue();
+    const error = new Error('Saldo actualizado'); error.status = 422;
+    reject(error); await pending;
+
+    assert.equal(calls, 1);
+    assert.equal(state.locked, false);
+    assert.equal(state.form.recipient.name, 'Persona sin registro');
+    assert.equal(state.requestKey, null);
+});
+
+test('blocked copies retain completed receipts and retrying the copy only opens their existing PDF', t => {
+    const state = workspace();
+    normal(state);
+    state.completed = { id: 7, ticketUrl: '/receipts/7/ticket' };
+    const originalOpen = window.open;
+    t.after(() => { window.open = originalOpen; });
+    window.open = () => null;
+
+    state.finish(true);
+    assert.equal(state.completed.id, 7);
+    const opened = []; const tab = { opener: {} };
+    window.open = (...args) => { opened.push(args); return tab; };
+    state.finish(true);
+
+    assert.deepEqual(opened, [['/receipts/7/ticket', '_blank']]);
+    assert.equal(tab.opener, null);
+    assert.equal(state.completed, null);
+});
+
+test('an earlier person search cannot replace the latest recipient results', async () => {
+    const state = workspace();
+    const pending = [];
+    state.api = async () => new Promise(resolve => pending.push(resolve));
+    state.lookupQuery = 'primero';
+    const first = state.loadLookup();
+    state.lookupQuery = 'segundo';
+    const second = state.loadLookup();
+
+    pending[1]({ data: [{ id: '2', name: 'Segundo' }] }); await second;
+    pending[0]({ data: [{ id: '1', name: 'Primero' }] }); await first;
+
+    assert.deepEqual(state.lookupRows, [{ id: '2', name: 'Segundo' }]);
+    assert.equal(state.lookupLoading, false);
+});
+
+test('ambiguous academic invoices require explicit period confirmation and an assigned receivable account', async () => {
+    const state = workspace();
+    state.mode = 'academic_cxc';
+    state.form.sourceId = 9;
+    const invoice = { origin: 'legacy', uuid: 'f1', number: 'DTE 1' };
+    state.selection = { remaining: '20.00' };
+    state.invoices = [invoice];
+    state.invoiceChoice = 'legacy|f1';
+    state.chooseInvoice();
+    state.form.account = '110201010101';
+    state.form.amount = '20.00';
+    state.exact();
+    let calls = 0;
+    state.api = async () => { calls++; return { id: 1 }; };
+
+    await state.issue();
+    assert.equal(calls, 0);
+    assert.match(state.notice, /Confirma/);
+    state.form.invoiceConfirmed = true;
+    await state.issue();
+
+    assert.equal(calls, 1);
+    assert.deepEqual(state.submittedPayload.invoice, { origin: 'legacy', uuid: 'f1', confirmed: true });
+    assert.equal(state.submittedPayload.sourceId, 9);
+    assert.equal('conceptId' in state.submittedPayload, false);
+});
+test('adding another academic CXC retains the first and sends one receipt with a combined total', async () => {
+    const state = workspace();
+    state.mode = 'academic_cxc';
+    state.form.sourceId = 1; state.form.studentId = '501';
+    state.form.amount = '10.00'; state.form.account = '110201010101';
+    state.form.invoice = { origin: 'legacy', uuid: 'f1', number: 'Factura 1' }; state.form.invoiceAutomatic = true;
+    state.selection = { remaining: '20.00', name: 'Febrero' };
+    state.openLookup = () => assert.fail('Agregar debe volver a la lista de cuotas');
+    state.addAcademic();
+    assert.equal(state.academicItems.length, 1);
+    assert.equal(state.total, 1000);
+    assert.equal(state.form.sourceId, null);
+    state.academicItems[0].amount = '8.00';
+    state.form.sourceId = 2; state.form.amount = '5.00'; state.form.account = '110201010101';
+    state.form.invoice = { origin: 'legacy', uuid: 'f2', number: 'Factura 2' }; state.form.invoiceAutomatic = true;
+    state.selection = { remaining: '5.00', name: 'Marzo' };
+    state.exact();
+    state.api = async () => ({ id: 3 });
+    await state.issue();
+    assert.equal(state.submittedPayload.amount, '13.00');
+    assert.equal(state.submittedPayload.academicItems.length, 2);
+    assert.equal('name' in state.submittedPayload.academicItems[0], false);
+    assert.equal('remaining' in state.submittedPayload.academicItems[0], false);
+    assert.equal('sourceId' in state.submittedPayload, false);
+    state.finish();
+    assert.equal(state.academicItems.length, 0);
+});
+
+test('closing quota details cancels a pending search without adding a hidden charge', async () => {
+    const state = workspace();
+    state.mode = 'academic_cxc'; state.form.sourceId = 1;
+    let resolve;
+    state.api = async () => new Promise(done => { resolve = done; });
+    const pending = state.prepare('Factura');
+    state.cancelAcademic();
+    resolve({ recipient: { name: 'Alumno' }, studentId: '501', remaining: '50.00', invoices: [], invoice: null });
+    await pending;
+    assert.equal(state.selection, null);
+    assert.equal(state.form.sourceId, null);
+    assert.equal(state.total, 0);
+    assert.equal(state.academicItems.length, 0);
+});

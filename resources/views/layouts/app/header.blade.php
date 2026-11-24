@@ -13,7 +13,7 @@
                 <flux:navbar.item icon="layout-grid" :href="route('dashboard')" :current="request()->routeIs('dashboard')" wire:navigate>
                     {{ __('Inicio') }}
                 </flux:navbar.item>
-                @canany(['libreria.ventas.ver', 'libreria.cajas.ver'])
+                @canany(['libreria.ventas.ver', 'libreria.cajas.ver', 'libreria.recibos.ver'])
                 <flux:dropdown>
                     <flux:navbar.item icon="book-open" icon:trailing="chevron-down" :current="request()->routeIs('libreria.*')">Librería</flux:navbar.item>
                     <flux:navmenu>
@@ -23,6 +23,9 @@
                         @can('libreria.cajas.ver')
                             <flux:navmenu.item :href="route('libreria.cajas.index')" wire:navigate>Caja y arqueos</flux:navmenu.item>
                         @endcan
+                        @if (config('receipts.enabled'))
+                            @can('libreria.recibos.ver')<flux:navmenu.item :href="route('libreria.recibos.index')" wire:navigate>Recibos</flux:navmenu.item>@endcan
+                        @endif
                     </flux:navmenu>
                 </flux:dropdown>
                 @endcanany
@@ -71,7 +74,7 @@
                     <flux:sidebar.item icon="layout-grid" :href="route('dashboard')" :current="request()->routeIs('dashboard')" wire:navigate>
                         {{ __('Inicio') }}
                     </flux:sidebar.item>
-                    @canany(['libreria.ventas.ver', 'libreria.cajas.ver'])
+                    @canany(['libreria.ventas.ver', 'libreria.cajas.ver', 'libreria.recibos.ver'])
                     <flux:sidebar.group heading="Librería" icon="book-open" expandable :expanded="request()->routeIs('libreria.*')">
                         @can('libreria.ventas.ver')
                             <flux:sidebar.item :href="route('libreria.venta')" :current="request()->routeIs('libreria.venta')" wire:navigate>Venta</flux:sidebar.item>
@@ -79,6 +82,9 @@
                         @can('libreria.cajas.ver')
                             <flux:sidebar.item :href="route('libreria.cajas.index')" :current="request()->routeIs('libreria.cajas.*', 'libreria.arqueos.*')" wire:navigate>Caja y arqueos</flux:sidebar.item>
                         @endcan
+                        @if (config('receipts.enabled'))
+                            @can('libreria.recibos.ver')<flux:sidebar.item :href="route('libreria.recibos.index')" :current="request()->routeIs('libreria.recibos.*')" wire:navigate>Recibos</flux:sidebar.item>@endcan
+                        @endif
                     </flux:sidebar.group>
                     @endcanany
                     @canany(array_values(array_filter(array_keys(config('permissions.catalog')), fn ($code) => str_starts_with($code, 'contaduria.') && str_ends_with($code, '.ver'))))

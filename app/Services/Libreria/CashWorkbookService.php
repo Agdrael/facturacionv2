@@ -149,12 +149,12 @@ class CashWorkbookService
         $sheet->setCellValue('E11', 0);
         $sheet->setCellValue('D14', (float) ($snapshot['documents']['01'] ?? 0));
         $sheet->setCellValue('E14', (float) ($snapshot['documents']['03'] ?? 0));
-        $sheet->setCellValue('F14', 0);
+        $sheet->setCellValue('F14', (float) ($snapshot['receiptTotal'] ?? 0));
         $sheet->setCellValue('D21', 0);
         $sheet->setCellValue('K10', '=SUM(K6,K9)');
         $sheet->setCellValue('K38', (float) ($methods['04'] ?? 0));
         $sheet->setCellValue('K44', (float) $snapshot['receivable']);
-        $checks = array_values(array_filter($snapshot['sales'], fn (array $sale): bool => BigDecimal::of($sale['payments']['04'] ?? '0')->isPositive()));
+        $checks = array_values(array_filter([...$snapshot['sales'], ...($snapshot['receipts'] ?? [])], fn (array $sale): bool => BigDecimal::of($sale['payments']['04'] ?? '0')->isPositive()));
         foreach (array_slice($checks, 0, 3) as $index => $sale) {
             $row = 35 + $index;
             $this->text($sheet, 'C'.$row, $sale['number']);
@@ -198,7 +198,7 @@ class CashWorkbookService
         $this->text($summary, 'A4', 'Abrió: '.$snapshot['openedBy'].' · Cerró: '.$snapshot['closedBy']);
         $this->text($summary, 'A6', 'Total documentos');
         $summary->setCellValue('B6', (float) $snapshot['total']);
-        $this->text($summary, 'A7', 'Saldo por cobrar');
+        $this->text($summary, 'A7', ($snapshot['version'] ?? 1) >= 2 ? 'Crédito emitido en ventas (no cobrado al emitir)' : 'Saldo por cobrar');
         $summary->setCellValue('B7', (float) $snapshot['receivable']);
         $row = 9;
         foreach ($methods as $code => $amount) {
@@ -228,6 +228,32 @@ class CashWorkbookService
                     $this->text($summary, $cell, (string) $value);
                 }
             }
+        }
+        if (($snapshot['version'] ?? 1) >= 2) {
+            $row += 3;
+            $this->text($summary, 'A'.$row, 'RECIBOS · cobros separados de las ventas');
+            $summary->setCellValue('E'.$row, (float) ($snapshot['receiptTotal'] ?? 0));
+            foreach ($snapshot['receiptCategories'] ?? [] as $kind => $amount) {
+                $row++;
+                $this->text($summary, 'A'.$row, $kind);
+                $summary->setCellValue('E'.$row, (float) $amount);
+            }
+            $row += 2;
+            foreach ($snapshot['receipts'] ?? [] as $receipt) {
+                $values = [$receipt['number'], $receipt['client'], $receipt['operator'], $receipt['state'], $receipt['total'], '',
+                    implode(' | ', array_map(fn ($code, $value) => $code.': '.$value, array_keys($receipt['payments']), array_values($receipt['payments']))), implode(' | ', $receipt['references'])];
+                foreach ($values as $index => $value) {
+                    $cell = Coordinate::stringFromColumnIndex($index + 1).$row;
+                    if ($index === 4) {
+                        $summary->setCellValue($cell, (float) $value);
+                    } else {
+                        $this->text($summary, $cell, (string) $value);
+                    }
+                }
+                $row++;
+            }
+            $this->text($summary, 'A'.$row, 'Ingresos netos recibidos (todos los medios)');
+            $summary->setCellValue('E'.$row, (float) ($snapshot['collections'] ?? 0));
         }
         $summary->getStyle('A1:H'.$row)->getFont()->setName('Arial')->setSize(10);
         $summary->getStyle('B6:B'.max(9, count($methods) + 8))->getNumberFormat()->setFormatCode('0.00');

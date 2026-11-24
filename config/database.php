@@ -2,6 +2,22 @@
 
 use Illuminate\Support\Str;
 
+$applicationPostgres = [
+    'driver' => 'pgsql',
+    'url' => env('DB_URL'),
+    'host' => env('DB_HOST', '127.0.0.1'),
+    'port' => env('DB_PORT', '5432'),
+    'database' => env('DB_DATABASE', 'santacecilia'),
+    'username' => env('DB_USERNAME', 'postgres'),
+    'password' => env('DB_PASSWORD', ''),
+    'charset' => 'utf8',
+    'timezone' => 'America/El_Salvador',
+    'prefix' => '',
+    'prefix_indexes' => true,
+    'search_path' => env('DB_SCHEMA', 'public'),
+    'sslmode' => env('DB_SSLMODE', 'prefer'),
+];
+
 return [
 
     /*
@@ -30,6 +46,8 @@ return [
     */
 
     'connections' => [
+        'pgsql' => $applicationPostgres,
+        'puntoventa_prueba' => $applicationPostgres,
 
         'sqlite' => [
             'driver' => 'sqlite',

@@ -9,7 +9,7 @@ uses(TestCase::class);
 
 beforeEach(function () {
     config(['database.default' => 'sqlite', 'database.connections.sqlite' => ['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => '', 'foreign_key_constraints' => false],
-        'database.connections.dtesantacecilia' => ['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => ''], 'services.factec.environment' => '01']);
+        'database.connections.dtesantacecilia' => ['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => ''], 'services.factec.environment' => '01', 'receipts.enabled' => false]);
     DB::purge('sqlite');
     DB::purge('dtesantacecilia');
     $this->withoutVite();

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Libreria;
 
 use App\Http\Controllers\Controller;
 use App\Models\Libreria\CashReconciliation;
+use App\Models\Libreria\Receipt;
 use App\Services\Libreria\CashRegisterService;
 use App\Services\Libreria\CashWorkbookService;
 use Illuminate\Contracts\View\View;
@@ -31,6 +32,12 @@ class CashReconciliationController extends Controller
         $ids = array_column($record->snapshot['sales'], 'saleId');
         $incidents = DB::table('libreria.venta_dtes as d')->join('libreria.venta_invalidaciones as i', 'i.venta_dte_id', '=', 'd.id')
             ->whereIn('d.venta_id', $ids)->whereNotNull('i.aplicada_at')->get(['d.numero_control', 'i.aplicada_at']);
+
+        if (! empty($record->snapshot['receipts'])) {
+            $receiptIncidents = Receipt::query()->whereIn('id', array_column($record->snapshot['receipts'], 'receiptId'))->whereNotNull('annulled_at')->get()
+                ->map(fn ($receipt) => (object) ['numero_control' => $receipt->number(), 'aplicada_at' => $receipt->annulled_at]);
+            $incidents = $incidents->concat($receiptIncidents);
+        }
 
         return view('libreria.cajas.arqueo', ['record' => $record, 'incidents' => $incidents]);
     }

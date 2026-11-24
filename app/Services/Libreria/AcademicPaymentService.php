@@ -10,6 +10,8 @@ use stdClass;
 
 class AcademicPaymentService
 {
+    public function __construct(private ReceiptCreditService $credits) {}
+
     public function apply(stdClass $journal): void
     {
         if (DB::table('libreria.venta_invalidaciones')->where('venta_dte_id', $journal->id)->exists()) {
@@ -20,6 +22,15 @@ class AcademicPaymentService
             throw new RuntimeException('Solo se aplican pagos con aceptación productiva y sello de recepción.');
         }
         if ($journal->pagos_aplicados_at !== null) {
+            return;
+        }
+        if (config('receipts.enabled') && (int) $document['resumen']['condicionOperacion'] === 2) {
+            $this->credits->register($journal);
+            DB::transaction(function () use ($journal): void {
+                DB::table('libreria.venta_dtes')->where('id', $journal->id)->update(['pagos_aplicados_at' => now(), 'transmision_error' => null, 'updated_at' => now()]);
+                DB::table('libreria.ventas')->where('id', $journal->venta_id)->update(['estado' => 'FACTURADO', 'updated_at' => now()]);
+            });
+
             return;
         }
         $claims = DB::table('libreria.venta_cuotas')->where('venta_id', $journal->venta_id)->orderBy('saldo_id')->get();
@@ -98,6 +109,11 @@ class AcademicPaymentService
     {
         $document = json_decode($journal->documento, true, 512, JSON_THROW_ON_ERROR);
         if ($document['identificacion']['ambiente'] === '00') {
+            return;
+        }
+        if (config('receipts.enabled') && (int) $document['resumen']['condicionOperacion'] === 2) {
+            $this->credits->reverse($journal);
+
             return;
         }
         $claims = DB::table('libreria.venta_cuotas')->where('venta_id', $journal->venta_id)->orderBy('saldo_id')->get();

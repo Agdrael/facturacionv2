@@ -29,7 +29,7 @@ class AccessControlService
                 } elseif ($code === 'libreria') {
                     $codes = array_values(array_filter($codes, fn (string $permission): bool => str_starts_with($permission, 'libreria.ventas.') && $permission !== 'libreria.ventas.invalidar'));
                 }
-                $codes = array_values(array_unique([...$codes, ...config('cash.role_permissions.'.$code, [])]));
+                $codes = array_values(array_unique([...$codes, ...config('cash.role_permissions.'.$code, []), ...array_map(fn ($action) => 'libreria.recibos.'.$action, config('receipts.role_permissions.'.$code, []))]));
                 $role->permissions()->sync(Permission::query()->whereIn('code', $codes)->pluck('id')->all());
             }
         });
@@ -52,8 +52,8 @@ class AccessControlService
                 'permissions' => ['array'],
                 'permissions.*' => ['string', 'distinct', Rule::in(array_keys(config('permissions.catalog', [])))],
             ], ['code.unique' => 'Ya existe un rol con ese código.', 'code.regex' => 'Usa letras minúsculas, números y guion bajo para el código.'])->validate();
-            if ($code !== 'contador' && in_array('libreria.ventas.invalidar', $permissions, true)) {
-                throw ValidationException::withMessages(['permissions' => 'Solo Admin y Contador pueden recibir el permiso de invalidación.']);
+            if ($code !== 'contador' && array_intersect(['libreria.ventas.invalidar', 'libreria.recibos.anular', 'libreria.recibos.conciliar'], $permissions) !== []) {
+                throw ValidationException::withMessages(['permissions' => 'Solo Admin y Contador pueden recibir permisos de invalidación, anulación o conciliación.']);
             }
             $role->fill(['code' => $code, 'name' => trim($name)])->save();
             $role->permissions()->sync(Permission::query()->whereIn('code', $permissions)->pluck('id')->all());
