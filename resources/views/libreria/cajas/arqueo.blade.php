@@ -6,6 +6,15 @@
         @if ($incidents->isNotEmpty())
             <flux:callout variant="warning"><flux:callout.heading>Incidencias posteriores al cierre</flux:callout.heading><flux:callout.text>El arqueo conserva sus importes originales. Las invalidaciones de DTE y anulaciones de recibos no registran una devolución automática de dinero.</flux:callout.text><ul class="mt-3 space-y-1 text-xs">@foreach ($incidents as $incident)<li class="break-all font-mono">{{ $incident->numero_control }}</li>@endforeach</ul></flux:callout>
         @endif
+        @can('libreria.arqueos.descargar')
+            <section class="access-panel p-5">
+                <div><p class="access-eyebrow">Documentos del cierre</p><h2 class="mt-2 text-lg font-semibold">Resúmenes para imprimir</h2><p class="access-muted mt-2 text-xs">Tickets PDF de 80 mm con los movimientos guardados de esta sesión.</p></div>
+                <div class="mt-5 grid gap-3 sm:grid-cols-2">
+                    <div class="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-zinc-200 p-4 dark:border-zinc-700"><div><h3 class="text-sm font-semibold">Resumen ventas</h3><p class="access-muted mt-1 text-xs">Medios de pago y crédito pendiente.</p></div><flux:button size="sm" icon="arrow-down-tray" :href="route('libreria.arqueos.summary', [$record->id, 'ventas'])" target="_blank" rel="noopener">Abrir PDF</flux:button></div>
+                    <div class="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-zinc-200 p-4 dark:border-zinc-700"><div><h3 class="text-sm font-semibold">Resumen recibos</h3><p class="access-muted mt-1 text-xs">Cobros por medio de pago, netos de cambio.</p></div>@if (isset($record->snapshot['receipts']))<flux:button size="sm" icon="arrow-down-tray" :href="route('libreria.arqueos.summary', [$record->id, 'recibos'])" target="_blank" rel="noopener">Abrir PDF</flux:button>@else<p class="access-muted text-xs">Este cierre no conserva datos de recibos.</p>@endif</div>
+                </div>
+            </section>
+        @endcan
         <div class="grid gap-3 sm:grid-cols-3">
             <div class="access-stat"><div><p class="access-label">Total documentos</p><p class="access-stat-value mt-2">${{ number_format((float) $record->snapshot['total'], 2) }}</p></div></div>
             <div class="access-stat"><div><p class="access-label">Efectivo neto de cambio</p><p class="access-stat-value mt-2">${{ number_format((float) ($record->snapshot['methods']['01'] ?? 0), 2) }}</p></div></div>

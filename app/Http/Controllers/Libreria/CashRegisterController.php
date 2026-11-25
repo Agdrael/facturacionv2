@@ -50,7 +50,7 @@ class CashRegisterController extends Controller
         $request->validate(['confirmed' => ['accepted']]);
         $record = $cash->close($request->user(), $session);
 
-        return to_route('libreria.arqueos.show', $record->id)->with('status', 'Caja cerrada. Los movimientos quedaron guardados; ya puedes descargar el Excel.');
+        return to_route('libreria.arqueos.show', $record->id)->with('status', 'Caja cerrada. Ya puedes imprimir los resúmenes de ventas y recibos, y descargar el Excel del arqueo.');
     }
 
     public function code(Request $request, int $session, CashRegisterService $cash): Response

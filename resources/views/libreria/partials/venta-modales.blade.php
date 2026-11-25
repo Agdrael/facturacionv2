@@ -11,17 +11,27 @@
             <p x-show="catalogLoading" role="status" class="px-4 py-12 text-center text-sm text-zinc-500">Cargando catálogo…</p>
             <div x-show="catalogError" x-cloak role="alert" class="p-4 text-sm text-red-700"><p x-text="catalogError"></p><flux:button size="xs" class="mt-3" x-on:click="searchCatalog(catalogPage)">Reintentar</flux:button></div>
             <template x-for="product in filteredCatalog" :key="product.id">
-                <div class="flex items-center gap-3 border-b border-zinc-200 p-3 last:border-0 dark:border-brand-paper/10">
-                    <div class="flex size-9 shrink-0 items-center justify-center rounded-lg bg-zinc-100 text-zinc-400 dark:bg-brand-paper/5"><flux:icon.shopping-bag class="size-4" /></div>
+                <div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-zinc-200 p-3 last:border-0 dark:border-brand-paper/10">
+                    <div class="flex min-w-0 items-center gap-3">
+                    <div class="hidden size-9 shrink-0 items-center justify-center rounded-lg bg-zinc-100 text-zinc-400 sm:flex dark:bg-brand-paper/5"><flux:icon.shopping-bag class="size-4" /></div>
                     <div class="min-w-0 flex-1"><p class="text-sm font-medium" x-text="product.name"></p><p class="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400"><span class="font-mono" x-text="product.code"></span><span class="mx-2">·</span><span x-show="product.category === 'paquetes'" x-text="`${product.componentsCount || 0} productos`"></span><span x-show="product.category !== 'paquetes'"><span x-text="product.productType === 'S' ? 'Servicio' : 'Bien'"></span><span class="mx-2">·</span><span x-text="product.taxable ? 'Gravado' : 'Exento'"></span></span></p><p x-show="product.stock && Number(product.stock.total || 0) <= 0" x-cloak class="mt-2 text-xs font-medium text-red-700 dark:text-red-400">No hay existencia</p><button type="button" x-show="product.configurationError" class="mt-2 text-xs font-medium text-amber-700 underline underline-offset-4" x-on:click="catalogConfigurationError = product.configurationError; $flux.modal('sale-product-configuration').show()">Revisar configuración</button></div>
-                    <span x-show="product.category !== 'paquetes'" class="text-sm font-semibold tabular-nums" x-text="product.netPrice === null ? 'Sin precio' : money(product.price)"></span>
+                    </div>
+                    <div class="flex shrink-0 flex-col items-end gap-2 sm:flex-row sm:items-center">
+                    <div x-show="product.category !== 'paquetes'" class="flex items-center gap-2">
+                        <span x-show="catalogQuantity(product) > 0" x-cloak class="inline-flex min-w-7 items-center justify-center rounded-md bg-brand-yellow px-1.5 py-1 text-xs font-bold tabular-nums text-brand-ink" x-text="catalogQuantity(product)" x-bind:aria-label="`${catalogQuantity(product)} de ${product.name} en la venta`" title="Cantidad agregada a la venta"></span>
+                        <span class="text-sm font-semibold tabular-nums" x-text="product.netPrice === null ? 'Sin precio' : money(product.price)"></span>
+                    </div>
                     <flux:button size="sm" icon="plus" x-on:click="product.category === 'paquetes' ? addPackage(product) : addProduct(product)" x-bind:disabled="packageAdding || !product.canSelect" x-bind:aria-label="`Agregar ${product.name}`"><span x-text="product.category === 'paquetes' ? (packageAdding ? 'Agregando…' : 'Agregar productos') : 'Agregar'"></span></flux:button>
+                    </div>
                 </div>
             </template>
             <div x-show="!catalogLoading && !catalogError && !filteredCatalog.length" class="px-4 py-12 text-center text-sm text-zinc-500 dark:text-zinc-400" x-text="catalogCategory === 'paquetes' && !search ? 'No hay paquetes registrados.' : 'No hay coincidencias. Prueba con otro nombre o código.'"></div>
         </div>
         <div x-show="!catalogError" class="flex items-center justify-between gap-3 text-xs text-zinc-500"><span x-text="`${catalogTotal} resultados · Página ${catalogPage} de ${catalogPages}`"></span><div class="flex gap-2"><flux:button size="xs" x-bind:disabled="catalogLoading || catalogPage <= 1" x-on:click="searchCatalog(catalogPage - 1)">Anterior</flux:button><flux:button size="xs" x-bind:disabled="catalogLoading || catalogPage >= catalogPages" x-on:click="searchCatalog(catalogPage + 1)">Siguiente</flux:button></div></div>
-        <div class="flex items-center justify-between gap-3 border-t border-zinc-200 pt-4 dark:border-brand-paper/10"><p class="text-xs text-zinc-500 dark:text-zinc-400"><span x-text="units"></span> unidades · <strong class="font-semibold text-brand-ink dark:text-brand-paper" x-text="money(total)"></strong></p><flux:modal.close><flux:button variant="primary">Volver a la venta <flux:icon.arrow-right class="ms-1 size-4" /></flux:button></flux:modal.close></div>
+        <div class="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 border-t border-zinc-200 bg-white py-4 dark:border-brand-paper/10">
+            <div class="min-w-0 flex-1 basis-44"><div class="flex items-center gap-3 text-xs"><span class="font-medium text-zinc-500">Productos incluidos</span><strong class="font-semibold tabular-nums text-brand-ink" x-text="money(total)"></strong></div><div class="mt-2 flex max-h-16 flex-wrap gap-1.5 overflow-y-auto" aria-live="polite"><template x-for="product in selectedCatalogProducts" :key="product.id"><span class="rounded-md border border-zinc-200 bg-zinc-100 px-2 py-1 text-[11px] text-brand-ink" x-bind:title="product.name" x-text="product.label"></span></template><span x-show="!selectedCatalogProducts.length" class="text-[11px] text-zinc-500">Aún no has agregado productos.</span></div></div>
+            <flux:modal.close><flux:button variant="primary">Volver a la venta <flux:icon.arrow-right class="ms-1 size-4" /></flux:button></flux:modal.close>
+        </div>
     </div>
 </flux:modal>
 

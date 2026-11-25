@@ -6,10 +6,12 @@ use App\Http\Controllers\Controller;
 use App\Models\Libreria\CashReconciliation;
 use App\Models\Libreria\Receipt;
 use App\Services\Libreria\CashRegisterService;
+use App\Services\Libreria\CashSummaryService;
 use App\Services\Libreria\CashWorkbookService;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Storage;
@@ -40,6 +42,17 @@ class CashReconciliationController extends Controller
         }
 
         return view('libreria.cajas.arqueo', ['record' => $record, 'incidents' => $incidents]);
+    }
+
+    public function summary(Request $request, int $reconciliation, string $kind, CashSummaryService $reports): Response
+    {
+        $record = $this->authorized($request, $reconciliation, 'descargar');
+        abort_unless($record->session->cerrado_at !== null, 422, 'Primero debe cerrarse la caja.');
+        $filename = 'Resumen_'.$kind.'_'.$record->session->register->codigo.'_sesion_'.$record->sesion_id.'.pdf';
+
+        return response($reports->render($record, $kind), 200, [
+            'Content-Type' => 'application/pdf', 'Content-Disposition' => 'inline; filename="'.$filename.'"', 'Cache-Control' => 'private, no-store',
+        ]);
     }
 
     public function download(Request $request, int $reconciliation, string $kind, CashWorkbookService $files): StreamedResponse

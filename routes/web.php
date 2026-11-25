@@ -52,6 +52,7 @@ Route::middleware([
     });
     Route::prefix('libreria/arqueos/{reconciliation}')->whereNumber('reconciliation')->name('libreria.arqueos.')->controller(CashReconciliationController::class)->group(function () {
         Route::get('/', 'show')->name('show');
+        Route::get('resumenes/{kind}', 'summary')->where('kind', 'ventas|recibos')->name('summary');
         Route::get('archivos/{kind}', 'download')->where('kind', 'original|entregado|firmado')->name('download');
         Route::post('archivo', 'upload')->name('upload');
         Route::post('revisar', 'review')->name('review');

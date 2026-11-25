@@ -2,8 +2,10 @@
 
 use App\Models\Libreria\CashReconciliation;
 use App\Models\Libreria\CashSession;
+use App\Models\Role;
 use App\Models\User;
 use App\Services\Libreria\CashRegisterService;
+use App\Services\Libreria\CashSummaryService;
 use App\Services\Libreria\CashWorkbookService;
 use Carbon\CarbonImmutable;
 use Database\Seeders\CashControlSeeder;
@@ -140,6 +142,15 @@ test('a snapshot reconciles mixed payments change credit balances and all operat
     expect($record->snapshot)->toMatchArray(['total' => '113.00', 'receivable' => '46.50', 'methods' => ['01' => '46.50', '03' => '20.00']]);
     expect(array_column($record->snapshot['sales'], 'operator'))->toContain('Operador', 'Segundo operador');
     expect(array_column($record->snapshot['sales'], 'dteState'))->toContain('PENDIENTE', 'RECHAZADO');
+    $reports = app(CashSummaryService::class);
+    $summary = $reports->summary($record, 'ventas');
+    expect($summary)->toMatchArray(['count' => 2, 'total' => '113.00', 'collected' => '66.50', 'credit' => '46.50',
+        'methods' => [['code' => '01', 'name' => 'Efectivo', 'amount' => '46.50'], ['code' => '03', 'name' => 'Tarjeta crédito', 'amount' => '20.00']]]);
+    expect($summary['operators'])->toContain('Operador', 'Segundo operador');
+    $this->get(route('libreria.arqueos.summary', [$record->id, 'ventas']))->assertOk()->assertHeader('Content-Type', 'application/pdf');
+    $this->get(route('libreria.arqueos.show', $record->id))->assertOk()->assertSee('Resumen ventas')->assertSee('Resumen recibos');
+    DB::table('libreria.ventas')->where('id', 1)->update(['estado' => 'ANULADO', 'total' => '0.00']);
+    expect($reports->summary($record->fresh(), 'ventas'))->toBe($summary);
 });
 
 test('reopening binds a single use code to the latest closure and creates an independent session', function () {
@@ -184,8 +195,19 @@ test('libreria is limited to its assigned caja and cannot read codes review or s
     $this->actingAs($cashier);
     $this->get(route('libreria.arqueos.show', $record->id))->assertForbidden();
     $this->get(route('libreria.arqueos.download', [$record->id, 'original']))->assertForbidden();
+    $this->get(route('libreria.arqueos.summary', [$record->id, 'ventas']))->assertForbidden();
+    $this->get(route('libreria.arqueos.summary', [$record->id, 'recibos']))->assertForbidden();
     $cashier->setAttribute('puntoventa', 'P001');
     $this->get(route('libreria.arqueos.show', $record->id))->assertOk();
+    $this->get(route('libreria.arqueos.summary', [$record->id, 'ventas']))->assertOk()->assertHeader('Cache-Control', 'no-store, private');
+    $this->get(route('libreria.arqueos.summary', [$record->id, 'recibos']))->assertOk();
+    $this->get('/libreria/arqueos/'.$record->id.'/resumenes/invalido')->assertNotFound();
+    $role = Role::query()->where('code', 'libreria')->sole();
+    $download = $role->permissions()->where('code', 'libreria.arqueos.descargar')->sole();
+    $role->permissions()->detach($download->id);
+    $this->get(route('libreria.arqueos.summary', [$record->id, 'ventas']))->assertForbidden();
+    $this->get(route('libreria.arqueos.summary', [$record->id, 'recibos']))->assertForbidden();
+    $this->get(route('libreria.arqueos.show', $record->id))->assertOk()->assertDontSee('Resúmenes para imprimir');
     $this->get(route('libreria.cajas.code', $record->sesion_id))->assertForbidden();
     $this->post(route('libreria.arqueos.review', $record->id))->assertForbidden();
     $this->post(route('libreria.arqueos.sign', $record->id))->assertForbidden();
@@ -193,6 +215,25 @@ test('libreria is limited to its assigned caja and cannot read codes review or s
     $admin->setAttribute('puntoventa', 'P004');
     $this->get(route('libreria.arqueos.show', $record->id))->assertOk();
     $this->get(route('libreria.cajas.code', $record->sesion_id))->assertOk()->assertHeader('Cache-Control', 'max-age=0, no-store, private');
+});
+
+test('closed session summaries distinguish no movements from missing historical receipt data', function () {
+    prepareCashControl($this);
+    $cash = app(CashRegisterService::class);
+    $session = $cash->open(auth()->user());
+    $record = $cash->close(auth()->user(), $session->id);
+    foreach (['ventas', 'recibos'] as $kind) {
+        expect(app(CashSummaryService::class)->summary($record, $kind))->toMatchArray(['count' => 0, 'total' => '0.00', 'collected' => '0.00', 'methods' => []]);
+        $this->get(route('libreria.arqueos.summary', [$record->id, $kind]))->assertOk()->assertHeader('Content-Type', 'application/pdf');
+    }
+    $oldSnapshot = $record->snapshot;
+    $record->update(['snapshot' => array_replace($oldSnapshot, ['total' => '1.00'])]);
+    $this->getJson(route('libreria.arqueos.summary', [$record->id, 'ventas']))->assertUnprocessable()
+        ->assertJsonPath('message', 'Los importes guardados en este cierre requieren revisión antes de generar el resumen.');
+    unset($oldSnapshot['receipts'], $oldSnapshot['receiptTotal']);
+    $record->update(['snapshot' => $oldSnapshot]);
+    $this->getJson(route('libreria.arqueos.summary', [$record->id, 'recibos']))->assertUnprocessable()->assertSee('Este cierre no conserva');
+    $this->get(route('libreria.arqueos.show', $record->id))->assertOk()->assertSee('Este cierre no conserva datos de recibos');
 });
 
 test('Excel delivery preserves system totals while permitting physical counts and observations', function () {

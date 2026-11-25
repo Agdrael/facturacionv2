@@ -435,3 +435,24 @@ test('credit invoice stock checks send the fiscal code and keep it unchanged aft
     assert.equal(body.documentType, '03');
     assert.equal(workspace.document.type, '03');
 });
+
+test('catalog indicators and short names follow the current cart quantities and removals', () => {
+    const workspace = sale();
+    const first = product();
+    const second = product({ id: 'product-18', productId: 18, name: 'Cuaderno universitario de cien páginas con líneas' });
+    assert.equal(workspace.catalogQuantity(first), 0);
+    workspace.addProduct(first);
+    workspace.addProduct(first);
+    workspace.addProduct(second);
+    assert.equal(workspace.catalogQuantity({ ...first }), 2);
+    assert.deepEqual(workspace.selectedCatalogProducts.map(row => row.name), [first.name, second.name]);
+    assert.equal(workspace.selectedCatalogProducts[1].label.length <= 30, true);
+    assert.equal(workspace.selectedCatalogProducts[1].label.endsWith('…'), true);
+    workspace.items[0].quantity = 1.5;
+    assert.equal(workspace.catalogQuantity(first), 1.5);
+    workspace.items.splice(0, 1);
+    assert.equal(workspace.catalogQuantity(first), 0);
+    assert.deepEqual(workspace.selectedCatalogProducts.map(row => row.name), [second.name]);
+    workspace.items = [];
+    assert.deepEqual(workspace.selectedCatalogProducts, []);
+});

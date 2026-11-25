@@ -207,6 +207,27 @@ export function createSaleWorkspace(options = {}) {
             return this.items.reduce((total, item) => total + (Number(item.quantity) || 0), 0);
         },
 
+        catalogQuantity(product) {
+            const quantity = this.items.reduce((sum, item) => {
+                const matches = product.productId != null && item.productId != null
+                    ? String(item.productId) === String(product.productId) : item.id === product.id;
+                return sum + (matches ? Math.max(0, Number(item.quantity) || 0) : 0);
+            }, 0);
+            return Math.round(quantity * 100) / 100;
+        },
+
+        get selectedCatalogProducts() {
+            const products = new Map();
+            for (const item of this.items) {
+                if (!(Number(item.quantity) > 0)) continue;
+                const id = item.productId != null ? `product-${item.productId}` : item.id;
+                if (products.has(id)) continue;
+                const name = item.name.trim();
+                products.set(id, { id, name, label: name.length > 30 ? name.slice(0, 29).trimEnd() + '…' : name });
+            }
+            return [...products.values()];
+        },
+
         get paid() {
             return this.payments.reduce((total, payment) => total + Math.round(Math.max(0, Number(payment.amount) || 0) * 100), 0);
         },

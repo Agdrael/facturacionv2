@@ -16,6 +16,7 @@ class CashReconciliation extends Model
 
     protected $fillable = ['sesion_id', 'snapshot', 'estado', 'original_path', 'entregado_path', 'firmado_path', 'archivos', 'entregado_at', 'revisado_por', 'revisado_at', 'firmado_por', 'firmado_nombre', 'firmado_empleado', 'firmado_at'];
 
+    /** @return array{snapshot: 'array', archivos: 'array', entregado_at: 'immutable_datetime', revisado_at: 'immutable_datetime', firmado_at: 'immutable_datetime'} */
     protected function casts(): array
     {
         return ['snapshot' => 'array', 'archivos' => 'array', 'entregado_at' => 'immutable_datetime', 'revisado_at' => 'immutable_datetime', 'firmado_at' => 'immutable_datetime'];

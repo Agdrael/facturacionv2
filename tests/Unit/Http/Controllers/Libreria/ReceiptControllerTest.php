@@ -4,6 +4,7 @@ use App\Models\Permission;
 use App\Models\Role;
 use App\Models\User;
 use App\Services\Libreria\CashRegisterService;
+use App\Services\Libreria\CashSummaryService;
 use App\Services\Libreria\CashWorkbookService;
 use App\Services\Libreria\ReceiptCreditService;
 use App\Services\Libreria\ReceiptMoney;
@@ -151,16 +152,25 @@ test('receipt collections enter the frozen cash snapshot separately from sales a
     $user = prepareReceipts($this, 'P001');
     $this->postJson(route('libreria.recibos.store'), receiptPayload())->assertUnprocessable();
     $session = app(CashRegisterService::class)->open($user);
-    $result = $this->postJson(route('libreria.recibos.store'), receiptPayload())->assertCreated();
+    $payload = receiptPayload();
+    $payload['payments'] = [['method' => '01', 'amount' => '8.00'], ['method' => '02', 'amount' => '4.00']];
+    $result = $this->postJson(route('libreria.recibos.store'), $payload)->assertCreated();
 
     $record = app(CashRegisterService::class)->close($user, $session->id);
 
     expect($record->snapshot['total'])->toBe('0.00')->and($record->snapshot['receiptTotal'])->toBe('10.00')
-        ->and($record->snapshot['methods']['01'])->toBe('10.00')->and($record->snapshot['collections'])->toBe('10.00');
+        ->and($record->snapshot['methods']['01'])->toBe('6.00')->and($record->snapshot['collections'])->toBe('10.00');
+    $reports = app(CashSummaryService::class);
+    $summary = $reports->summary($record, 'recibos');
+    expect($summary)->toMatchArray(['total' => '10.00', 'collected' => '10.00', 'count' => 1,
+        'methods' => [['code' => '01', 'name' => 'Efectivo', 'amount' => '6.00'], ['code' => '02', 'name' => 'Tarjeta débito', 'amount' => '4.00']]]);
+    expect($reports->summary($record, 'ventas'))->toMatchArray(['count' => 0, 'total' => '0.00', 'methods' => []]);
+    $this->get(route('libreria.arqueos.summary', [$record->id, 'recibos']))->assertOk()->assertHeader('Content-Type', 'application/pdf');
     $book = app(CashWorkbookService::class)->build($record);
     expect($book->getSheetByName('Arqueo')->getCell('F14')->getValue())->toEqual(10);
     $this->postJson($result->json('annulUrl'), ['reason' => 'Anulación posterior al cierre'])->assertOk();
     expect($record->fresh()->snapshot)->toBe($record->snapshot);
+    expect($reports->summary($record->fresh(), 'recibos'))->toBe($summary);
     $this->get(route('libreria.arqueos.show', $record->id))->assertOk()->assertSee($result->json('number'));
 });
 

@@ -19,6 +19,7 @@ class CashSession extends Model
 
     protected $hidden = ['codigo_reapertura'];
 
+    /** @return array{fecha_operativa: 'immutable_date', abierto_at: 'immutable_datetime', cerrado_at: 'immutable_datetime', codigo_usado_at: 'immutable_datetime', codigo_reapertura: 'encrypted'} */
     protected function casts(): array
     {
         return ['fecha_operativa' => 'immutable_date', 'abierto_at' => 'immutable_datetime', 'cerrado_at' => 'immutable_datetime', 'codigo_usado_at' => 'immutable_datetime', 'codigo_reapertura' => 'encrypted'];
