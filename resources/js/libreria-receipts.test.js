@@ -184,3 +184,18 @@ test('closing quota details cancels a pending search without adding a hidden cha
     assert.equal(state.total, 0);
     assert.equal(state.academicItems.length, 0);
 });
+test('completing a receipt payment fills only its missing share without replacing other methods', () => {
+    const state = workspace();
+    normal(state);
+    state.form.payments = [{ uid: 1, method: '01', amount: '4.00', reference: '' }, { uid: 2, method: '02', amount: '', reference: 'AUTH' }];
+    state.completePayment(2);
+    assert.equal(state.form.payments[0].amount, '4.00');
+    assert.deepEqual(state.form.payments[1], { uid: 2, method: '02', amount: '6.00', reference: 'AUTH' });
+    state.form.amount = '8.00';
+    state.completePayment(2);
+    assert.equal(state.form.payments[1].amount, '4.00');
+    state.submittedPayload = {};
+    state.form.amount = '12.00';
+    state.completePayment(2);
+    assert.equal(state.form.payments[1].amount, '4.00');
+});

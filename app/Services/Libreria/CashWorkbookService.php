@@ -145,7 +145,7 @@ class CashWorkbookService
         $this->text($sheet, 'C11', $snapshot['register']);
         $this->text($sheet, 'C14', $snapshot['register']);
         $methods = $snapshot['methods'];
-        $sheet->setCellValue('D11', (float) BigDecimal::of($methods['02'] ?? '0')->plus($methods['03'] ?? '0')->__toString());
+        $sheet->setCellValue('D11', (float) BigDecimal::of($methods['02'] ?? '0')->plus($methods['03'] ?? '0')->plus($methods['V1_CARD'] ?? '0')->__toString());
         $sheet->setCellValue('E11', 0);
         $sheet->setCellValue('D14', (float) ($snapshot['documents']['01'] ?? 0));
         $sheet->setCellValue('E14', (float) ($snapshot['documents']['03'] ?? 0));
@@ -201,25 +201,39 @@ class CashWorkbookService
         $this->text($summary, 'A7', ($snapshot['version'] ?? 1) >= 2 ? 'Crédito emitido en ventas (no cobrado al emitir)' : 'Saldo por cobrar');
         $summary->setCellValue('B7', (float) $snapshot['receivable']);
         $row = 9;
+        if (isset($snapshot['legacy'])) {
+            foreach ($snapshot['origins'] as $source => $amounts) {
+                $this->text($summary, 'D'.$row, strtoupper($source).' · Ventas / recibos / cobrado');
+                $this->text($summary, 'E'.$row, $amounts['sales'].' / '.$amounts['receipts'].' / '.$amounts['collections']);
+                $row++;
+            }
+            foreach ($snapshot['legacy']['sessions'] as $turn) {
+                $this->text($summary, 'D'.$row, 'Turno V1 #'.$turn['legacyId']);
+                $this->text($summary, 'E'.$row, $turn['openedAt'].' → '.$turn['closedAt']);
+                $row++;
+            }
+        }
         foreach ($methods as $code => $amount) {
             $label = match ((string) $code) {
-                '01' => 'Efectivo neto de cambio', '02' => 'Tarjeta débito', '03' => 'Tarjeta crédito', '04' => 'Cheque', '05' => 'Transferencia bancaria', default => 'Otro medio registrado'
+                '01' => 'Efectivo neto de cambio', '02' => 'Tarjeta débito', '03' => 'Tarjeta crédito', '04' => 'Cheque', '05' => 'Transferencia bancaria',
+                'V1_CARD' => 'Tarjeta V1, sin especificar', '11' => 'Bitcoin', '99' => 'Pago en línea', default => 'Otro medio registrado'
             };
             $this->text($summary, 'A'.$row, $code.' · '.$label);
             $summary->setCellValue('B'.$row, (float) $amount);
+            $summary->getStyle('B'.$row)->getNumberFormat()->setFormatCode('0.00');
             $row++;
         }
         $row += 2;
-        $headers = ['Documento', 'Cliente', 'Operador', 'Estado DTE al cierre', 'Total', 'Saldo por cobrar', 'Pagos netos por método', 'Referencias'];
+        $headers = ['Documento', 'Cliente', 'Operador', 'Estado DTE al cierre', 'Total', 'Saldo por cobrar', 'Pagos netos por método', 'Referencias', 'Origen'];
         foreach ($headers as $index => $header) {
             $this->text($summary, Coordinate::stringFromColumnIndex($index + 1).$row, $header);
         }
-        $summary->getStyle('A'.$row.':H'.$row)->getFont()->setBold(true);
+        $summary->getStyle('A'.$row.':I'.$row)->getFont()->setBold(true);
         foreach ($snapshot['sales'] as $sale) {
             $row++;
             $values = [$sale['number'], $sale['client'], $sale['operator'], $sale['dteState'], $sale['total'], $sale['receivable'],
                 implode(' | ', array_map(fn ($code, $amount): string => $code.': '.$amount, array_keys($sale['payments']), array_values($sale['payments']))),
-                implode(' | ', $sale['references'])];
+                implode(' | ', $sale['references']), strtoupper($sale['source'] ?? 'v2')];
             foreach ($values as $index => $value) {
                 $cell = Coordinate::stringFromColumnIndex($index + 1).$row;
                 if (in_array($index, [4, 5], true)) {
@@ -241,7 +255,7 @@ class CashWorkbookService
             $row += 2;
             foreach ($snapshot['receipts'] ?? [] as $receipt) {
                 $values = [$receipt['number'], $receipt['client'], $receipt['operator'], $receipt['state'], $receipt['total'], '',
-                    implode(' | ', array_map(fn ($code, $value) => $code.': '.$value, array_keys($receipt['payments']), array_values($receipt['payments']))), implode(' | ', $receipt['references'])];
+                    implode(' | ', array_map(fn ($code, $value) => $code.': '.$value, array_keys($receipt['payments']), array_values($receipt['payments']))), implode(' | ', $receipt['references']), strtoupper($receipt['source'] ?? 'v2')];
                 foreach ($values as $index => $value) {
                     $cell = Coordinate::stringFromColumnIndex($index + 1).$row;
                     if ($index === 4) {
@@ -255,10 +269,10 @@ class CashWorkbookService
             $this->text($summary, 'A'.$row, 'Ingresos netos recibidos (todos los medios)');
             $summary->setCellValue('E'.$row, (float) ($snapshot['collections'] ?? 0));
         }
-        $summary->getStyle('A1:H'.$row)->getFont()->setName('Arial')->setSize(10);
+        $summary->getStyle('A1:I'.$row)->getFont()->setName('Arial')->setSize(10);
         $summary->getStyle('B6:B'.max(9, count($methods) + 8))->getNumberFormat()->setFormatCode('0.00');
-        $summary->getStyle('A1:H'.$row)->getAlignment()->setWrapText(true);
-        foreach (range('A', 'H') as $column) {
+        $summary->getStyle('A1:I'.$row)->getAlignment()->setWrapText(true);
+        foreach (range('A', 'I') as $column) {
             $summary->getColumnDimension($column)->setWidth($column === 'A' ? 46 : 25);
         }
         $summary->freezePane('A5');

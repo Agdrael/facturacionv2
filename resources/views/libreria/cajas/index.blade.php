@@ -19,6 +19,15 @@
                 <section class="access-panel overflow-hidden">
                     <div class="access-panel-heading"><h2 class="font-semibold">Caja {{ $register->codigo }}</h2><span class="access-badge">{{ $isOpen ? 'Abierta' : 'Cerrada' }}</span></div>
                     <div class="space-y-5 p-5">
+                        @if ($legacyStates[$register->codigo] ?? false)
+                            <div class="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
+                                <p class="font-semibold">Cierre conjunto con V1 activo</p>
+                                <p class="mt-1 text-xs leading-5">Al cerrar aquí también se cerrará V1. El arqueo reunirá ventas y recibos de ambos sistemas.</p>
+                                @can('libreria.arqueos.revisar')
+                                    <flux:button :href="route('libreria.cajas.legacy.show', $register->codigo)" size="sm" class="mt-3">Preparar integración V1</flux:button>
+                                @endcan
+                            </div>
+                        @endif
                         @if ($cashSession)
                             <dl class="grid gap-3 text-xs">
                                 <div class="flex justify-between gap-3"><dt class="access-muted">Sesión</dt><dd>#{{ $cashSession->id }}</dd></div>

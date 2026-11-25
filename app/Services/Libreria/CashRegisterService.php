@@ -14,7 +14,7 @@ use Illuminate\Validation\ValidationException;
 
 class CashRegisterService
 {
-    public function __construct(private CashSnapshotService $snapshots, private EmployeeAccessService $employees) {}
+    public function __construct(private CashSnapshotService $snapshots, private EmployeeAccessService $employees, private LegacyCashBridgeService $legacy, private LegacyCashSnapshotService $legacySnapshots) {}
 
     public function controlled(string $code): bool
     {
@@ -109,7 +109,17 @@ class CashRegisterService
             abort_if($employee === null, 403);
             $session->update(['cerrado_por' => $user->id, 'cerrado_nombre' => $user->name, 'cerrado_empleado' => $employee->codigo, 'cerrado_at' => now(), 'codigo_reapertura' => (string) random_int(100000, 999999)]);
 
-            return $session->reconciliation()->create(['snapshot' => $this->snapshots->build($session), 'estado' => 'pendiente_excel', 'archivos' => []]);
+            $legacy = $this->legacy->close($session);
+            $snapshot = $this->snapshots->build($session);
+            if ($legacy !== null) {
+                $snapshot = $this->legacySnapshots->merge($snapshot, $legacy);
+            }
+            $record = $session->reconciliation()->create(['snapshot' => $snapshot, 'estado' => 'pendiente_excel', 'archivos' => []]);
+            if ($legacy !== null) {
+                $this->legacy->claim($legacy, $record->id, $user);
+            }
+
+            return $record;
         }, 3);
     }
 }

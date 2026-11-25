@@ -7,6 +7,7 @@ use App\Models\Libreria\CashReconciliation;
 use App\Models\Libreria\CashRegister;
 use App\Models\Libreria\CashSession;
 use App\Services\Libreria\CashRegisterService;
+use App\Services\Libreria\LegacyCashBridgeService;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -15,7 +16,7 @@ use Illuminate\Support\Facades\Gate;
 
 class CashRegisterController extends Controller
 {
-    public function index(Request $request): View
+    public function index(Request $request, LegacyCashBridgeService $legacy): View
     {
         $user = $request->user();
         $point = (string) $user->getAttribute('puntoventa');
@@ -27,7 +28,7 @@ class CashRegisterController extends Controller
                 ->orderByDesc('id')->paginate(15)
             : null;
 
-        return view('libreria.cajas.index', ['registers' => $registers, 'records' => $records, 'point' => $point, 'today' => now(config('cash.timezone'))->toDateString()]);
+        return view('libreria.cajas.index', ['registers' => $registers, 'records' => $records, 'point' => $point, 'today' => now(config('cash.timezone'))->toDateString(), 'legacyStates' => $legacy->states()]);
     }
 
     public function open(Request $request, CashRegisterService $cash): RedirectResponse

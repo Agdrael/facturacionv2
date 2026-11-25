@@ -136,6 +136,13 @@ export function createReceiptWorkspace(options = {}) {
         },
         removeAcademic(index) { if (!this.locked && !this.selecting) this.academicItems.splice(index, 1); },
         exact() { if (!this.locked && options.methods.some(row => row.codigo === '01')) this.form.payments = [{ uid: ++this.sequence, method: '01', amount: (this.total / 100).toFixed(2), reference: '' }]; },
+        completePayment(uid) {
+            if (this.locked || this.selecting) return;
+            const payment = this.form.payments.find(row => row.uid === uid);
+            if (!payment) return;
+            const remaining = this.total - (this.paid - this.cents(payment.amount));
+            if (remaining > 0) payment.amount = (remaining / 100).toFixed(2);
+        },
         addPayment() { if (!this.locked) this.form.payments.push({ uid: ++this.sequence, method: options.methods[0]?.codigo || '01', amount: '', reference: '' }); },
         removePayment(uid) { if (!this.locked && this.form.payments.length > 1) this.form.payments = this.form.payments.filter(row => row.uid !== uid); },
         payload() {

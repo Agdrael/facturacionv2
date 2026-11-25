@@ -76,17 +76,35 @@
                             <div class="min-w-0 flex-1"><flux:textarea label="Observación del recibo (opcional)" x-model="form.observation" maxlength="500" rows="2" resize="none" class="min-h-20 bg-white! text-base! leading-relaxed! text-brand-ink! placeholder:text-zinc-500!" placeholder="Escribe aquí una indicación o detalle importante de este recibo…" /></div>
                         </div>
                     </fieldset>
-                    <aside data-theme="light" class="sale-panel flex min-w-0 flex-col overflow-hidden" aria-label="Resumen del cobro">
-                        <div class="sale-panel-heading shrink-0 px-5 py-5"><p class="text-xs text-white/60">Total a cobrar</p><p class="mt-2 text-4xl font-semibold tracking-tight tabular-nums" x-text="money(total)"></p><p class="mt-2 text-[11px] text-white/60" x-text="mode === 'academic_cxc' ? academicItems.length + ' cuotas en este recibo' : 'Un comprobante para esta operación'"></p></div>
-                        <fieldset x-bind:disabled="locked" class="min-h-0 min-w-0 flex-1 space-y-4 overflow-auto p-5">
-                            <div class="flex items-center justify-between gap-2"><h2 class="text-sm font-semibold">Medios de pago</h2><flux:button size="xs" variant="ghost" x-on:click="exact()">Efectivo exacto</flux:button></div>
-                            <template x-for="payment in form.payments" :key="payment.uid"><div class="space-y-3 rounded-xl border border-zinc-200 bg-white/50 p-3"><div class="grid grid-cols-[minmax(0,1fr)_6rem] gap-2"><flux:select label="Medio" size="sm" x-model="payment.method"><template x-for="row in options.methods" :key="row.codigo"><option :value="row.codigo" x-text="row.valor"></option></template></flux:select><flux:input label="Recibido" size="sm" type="number" min="0.01" step="0.01" x-model="payment.amount" /></div><flux:input x-show="payment.method !== '01'" label="Referencia" size="sm" x-model="payment.reference" maxlength="100" /><div x-show="form.payments.length > 1" class="text-right"><flux:button size="xs" variant="ghost" x-on:click="removePayment(payment.uid)">Quitar medio</flux:button></div></div></template>
-                            <flux:button size="xs" class="w-full" icon="plus" x-on:click="addPayment()">Otro medio de pago</flux:button>
+                    <aside data-theme="light" class="sale-panel flex max-h-full min-w-0 flex-col self-start overflow-hidden" aria-label="Cobro del recibo">
+                        <header class="flex shrink-0 items-center justify-between gap-4 border-b border-zinc-200 px-5 py-4">
+                            <div><h2 class="text-sm font-semibold">Cobro del recibo</h2><p class="mt-1 text-xs text-zinc-500">Total a recibir</p></div>
+                            <p class="text-2xl font-semibold tracking-tight tabular-nums" x-text="money(total)"></p>
+                        </header>
+                        <fieldset x-bind:disabled="locked" class="min-h-0 min-w-0 space-y-4 overflow-y-auto px-5 py-4">
+                            <div class="grid grid-cols-[minmax(0,1fr)_6rem_1.5rem] gap-2 text-[11px] font-medium text-zinc-500"><span>Forma de pago</span><span class="text-right">Monto ($)</span><span class="sr-only">Quitar pago</span></div>
+                            <template x-for="(payment, index) in form.payments" :key="payment.uid">
+                                <div :class="index > 0 ? 'border-t border-zinc-200 pt-4' : ''">
+                                    <div class="grid grid-cols-[minmax(0,1fr)_6rem_1.5rem] items-center gap-2">
+                                        <flux:select size="sm" x-model="payment.method" x-bind:aria-label="'Forma de pago ' + (index + 1)"><template x-for="row in options.methods" :key="row.codigo"><option :value="row.codigo" x-text="row.valor"></option></template></flux:select>
+                                        <flux:input size="sm" type="number" min="0.01" step="0.01" placeholder="0.00" x-model="payment.amount" x-bind:aria-label="'Monto recibido del pago ' + (index + 1)" class="[&_input]:text-right" />
+                                        <flux:button size="xs" variant="ghost" icon="x-mark" x-show="form.payments.length > 1" x-on:click="removePayment(payment.uid)" x-bind:aria-label="'Quitar pago ' + (index + 1)" />
+                                    </div>
+                                    <div x-show="payment.method !== '01'" class="mt-2"><flux:input size="sm" placeholder="Referencia (opcional)" x-model="payment.reference" maxlength="100" x-bind:aria-label="'Referencia del pago ' + (index + 1)" /></div>
+                                    <div x-show="total > 0 && paid < total" class="mt-2 text-right"><button type="button" class="text-[11px] font-medium text-zinc-600 underline decoration-zinc-300 underline-offset-4 hover:text-brand-ink" x-on:click="completePayment(payment.uid)">Completar monto</button></div>
+                                </div>
+                            </template>
+                            <button type="button" class="inline-flex items-center gap-1.5 text-xs font-medium text-zinc-600 hover:text-brand-ink disabled:opacity-50" x-on:click="addPayment()"><flux:icon.plus class="size-3.5" /><span x-text="form.payments.length === 1 ? 'Dividir entre varios medios' : 'Agregar otro medio'"></span></button>
                         </fieldset>
-                        <div class="shrink-0 space-y-4 border-t border-zinc-200 bg-zinc-100/50 p-5">
-                            <dl class="space-y-3 text-xs"><div class="flex justify-between"><dt class="text-zinc-500">Total recibido</dt><dd class="font-medium tabular-nums" x-text="money(paid)"></dd></div><div x-show="paid < total" class="flex justify-between text-amber-700"><dt>Falta por recibir</dt><dd class="font-semibold tabular-nums" x-text="money(Math.max(0, total - paid))"></dd></div><div class="flex items-center justify-between border-t border-zinc-200 pt-3"><dt class="text-zinc-500">Cambio en efectivo</dt><dd class="text-lg font-semibold tabular-nums" x-text="money(change)"></dd></div></dl>
-                            <flux:button variant="primary" class="w-full" x-on:click="issue()" x-bind:disabled="busy || selecting || !!completed || (!submittedPayload && total <= 0)"><span x-text="busy ? 'Registrando…' : (submittedPayload ? 'Reintentar mismo recibo' : 'Emitir recibo')"></span><flux:icon.arrow-right class="ms-1 size-4" /></flux:button>
-                            <p class="text-center text-[10px] text-zinc-500">Al finalizar podrás solicitar una copia.</p>
+                        <div class="shrink-0 space-y-4 border-t border-zinc-200 px-5 py-4">
+                            <dl x-show="paid > 0 || total > 0" class="space-y-2.5 text-xs" aria-live="polite">
+                                <div x-show="form.payments.length > 1" class="flex justify-between"><dt class="text-zinc-500">Total recibido</dt><dd class="font-medium tabular-nums" x-text="money(paid)"></dd></div>
+                                <div x-show="paid < total" class="flex justify-between text-amber-700"><dt>Por completar</dt><dd class="font-semibold tabular-nums" x-text="money(Math.max(0, total - paid))"></dd></div>
+                                <div x-show="change > 0 && change <= cash" class="flex items-center justify-between rounded-lg bg-brand-yellow/10 px-3 py-2.5"><dt>Cambio en efectivo</dt><dd class="text-lg font-semibold tabular-nums" x-text="money(change)"></dd></div>
+                                <div x-show="change > cash" role="status" class="rounded-lg bg-red-500/5 px-3 py-2 text-red-700">El excedente solo puede devolverse del efectivo recibido.</div>
+                            </dl>
+                            <flux:button variant="primary" class="w-full" x-on:click="issue()" x-bind:disabled="busy || selecting || !!completed || (!submittedPayload && total <= 0)"><span x-text="busy ? 'Registrando…' : (submittedPayload ? 'Reintentar mismo recibo' : 'Emitir recibo')"></span></flux:button>
+                            <p class="text-center text-[10px] text-zinc-500">Podrás elegir si deseas una copia al finalizar.</p>
                             <details class="text-[10px] text-zinc-500"><summary class="cursor-pointer">Cuenta de cargo</summary><p class="mt-2 font-mono" x-text="options.cashAccount"></p></details>
                         </div>
                     </aside>

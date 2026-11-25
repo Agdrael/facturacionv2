@@ -31,14 +31,29 @@ class CashReconciliationController extends Controller
     public function show(Request $request, int $reconciliation): View
     {
         $record = $this->authorized($request, $reconciliation, 'ver');
-        $ids = array_column($record->snapshot['sales'], 'saleId');
+        $nativeSales = array_filter($record->snapshot['sales'], fn (array $row): bool => ($row['source'] ?? 'v2') === 'v2');
+        $ids = array_column($nativeSales, 'saleId');
         $incidents = DB::table('libreria.venta_dtes as d')->join('libreria.venta_invalidaciones as i', 'i.venta_dte_id', '=', 'd.id')
             ->whereIn('d.venta_id', $ids)->whereNotNull('i.aplicada_at')->get(['d.numero_control', 'i.aplicada_at']);
 
         if (! empty($record->snapshot['receipts'])) {
-            $receiptIncidents = Receipt::query()->whereIn('id', array_column($record->snapshot['receipts'], 'receiptId'))->whereNotNull('annulled_at')->get()
+            $nativeReceipts = array_filter($record->snapshot['receipts'], fn (array $row): bool => ($row['source'] ?? 'v2') === 'v2');
+            $receiptIncidents = ($nativeReceipts === [] ? collect() : Receipt::query()->whereIn('id', array_column($nativeReceipts, 'receiptId'))->whereNotNull('annulled_at')->get())
                 ->map(fn ($receipt) => (object) ['numero_control' => $receipt->number(), 'aplicada_at' => $receipt->annulled_at]);
             $incidents = $incidents->concat($receiptIncidents);
+        }
+
+        if (isset($record->snapshot['legacy'])) {
+            foreach (['sales' => ['public.ventas', 'id_venta', 'legacySaleId'], 'receipts' => ['public.recibos', 'id', 'legacyReceiptId']] as $key => [$table, $id, $field]) {
+                $rows = array_values(array_filter($record->snapshot[$key], fn (array $row): bool => ($row['source'] ?? 'v2') === 'v1'));
+                $current = DB::table($table)->whereIn($id, array_column($rows, $field))->get()->keyBy($id);
+                foreach ($rows as $row) {
+                    $live = $current->get($row[$field]);
+                    if ($live === null || $live->anulado) {
+                        $incidents->push((object) ['numero_control' => $row['number'].' · V1: '.($live === null ? 'registro eliminado' : 'anulado posteriormente'), 'aplicada_at' => null]);
+                    }
+                }
+            }
         }
 
         return view('libreria.cajas.arqueo', ['record' => $record, 'incidents' => $incidents]);

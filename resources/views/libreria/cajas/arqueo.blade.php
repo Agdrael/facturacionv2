@@ -15,6 +15,26 @@
                 </div>
             </section>
         @endcan
+        @if (isset($record->snapshot['legacy']))
+            <section class="access-panel space-y-4 p-5">
+                <div><h2 class="font-semibold">Arqueo conjunto V1 + V2</h2><p class="access-muted mt-1 text-xs">Importes guardados al cierre. Cada sistema mantiene su apertura independiente.</p></div>
+                <div class="grid gap-3 sm:grid-cols-2">
+                    @foreach ($record->snapshot['origins'] as $source => $amounts)
+                        <div class="rounded-xl border border-zinc-200 p-4 text-sm dark:border-zinc-700">
+                            <p class="font-semibold">{{ strtoupper($source) }}</p>
+                            <dl class="mt-3 space-y-2">
+                                @foreach (['sales' => 'Ventas', 'receipts' => 'Recibos', 'collections' => 'Cobrado'] as $key => $label)
+                                    <div class="flex justify-between gap-3"><dt class="access-muted">{{ $label }}</dt><dd class="tabular-nums">${{ number_format((float) $amounts[$key], 2) }}</dd></div>
+                                @endforeach
+                            </dl>
+                        </div>
+                    @endforeach
+                </div>
+                @foreach ($record->snapshot['legacy']['sessions'] as $turn)
+                    <p class="access-muted text-xs">Turno V1 #{{ $turn['legacyId'] }} · {{ \Carbon\CarbonImmutable::parse($turn['openedAt'])->format('d/m/Y H:i:s') }} → {{ $turn['closedAt'] ? \Carbon\CarbonImmutable::parse($turn['closedAt'])->format('d/m/Y H:i:s') : 'Abierto' }}</p>
+                @endforeach
+            </section>
+        @endif
         <div class="grid gap-3 sm:grid-cols-3">
             <div class="access-stat"><div><p class="access-label">Total documentos</p><p class="access-stat-value mt-2">${{ number_format((float) $record->snapshot['total'], 2) }}</p></div></div>
             <div class="access-stat"><div><p class="access-label">Efectivo neto de cambio</p><p class="access-stat-value mt-2">${{ number_format((float) ($record->snapshot['methods']['01'] ?? 0), 2) }}</p></div></div>
@@ -79,7 +99,7 @@
         <section class="access-panel overflow-hidden">
             <div class="access-panel-heading"><h2 class="font-semibold">Movimientos al cierre</h2><span class="access-badge">{{ count($record->snapshot['sales']) }} documentos</span></div>
             <div class="overflow-x-auto"><table class="access-user-table"><thead><tr><th>Documento</th><th>Cliente / operador</th><th>Estado DTE al cierre</th><th>Total</th></tr></thead><tbody>
-                @forelse ($record->snapshot['sales'] as $sale)<tr><td class="max-w-64 break-all font-mono text-[10px]">{{ $sale['number'] }}</td><td><p>{{ $sale['client'] }}</p><p class="access-muted mt-1 text-xs">{{ $sale['operator'] }}</p></td><td>{{ $sale['dteState'] }}</td><td class="tabular-nums">${{ number_format((float) $sale['total'], 2) }}</td></tr>@empty<tr><td colspan="4" class="access-muted py-8! text-center">La sesión no registró ventas vigentes.</td></tr>@endforelse
+                @forelse ($record->snapshot['sales'] as $sale)<tr><td class="max-w-64 break-all font-mono text-[10px]">@if (isset($record->snapshot['legacy']))<span class="access-badge mb-1">{{ strtoupper($sale['source'] ?? 'v2') }}</span><br>@endif{{ $sale['number'] }}</td><td><p>{{ $sale['client'] }}</p><p class="access-muted mt-1 text-xs">{{ $sale['operator'] }}</p></td><td>{{ $sale['dteState'] }}</td><td class="tabular-nums">${{ number_format((float) $sale['total'], 2) }}</td></tr>@empty<tr><td colspan="4" class="access-muted py-8! text-center">La sesión no registró ventas vigentes.</td></tr>@endforelse
             </tbody></table></div>
         </section>
         @if (! empty($record->snapshot['receipts']))

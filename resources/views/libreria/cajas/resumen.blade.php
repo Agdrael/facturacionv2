@@ -18,9 +18,19 @@
     <tr><td width="23%" class="small">Cierre</td><td width="77%" align="right" class="small">{{ $summary['closedAt'] }}</td></tr>
 </table>
 <p class="small"><strong>Cerró:</strong> {{ $summary['closedBy'] }}</p>
+@foreach ($summary['legacyPeriods'] as $turn)
+    <p class="small"><strong>Turno V1 #{{ $turn['legacyId'] }}:</strong><br>{{ \Carbon\CarbonImmutable::parse($turn['openedAt'])->format('d/m/Y H:i') }} → {{ $turn['closedAt'] ? \Carbon\CarbonImmutable::parse($turn['closedAt'])->format('d/m/Y H:i') : 'Abierto' }}</p>
+@endforeach
 <p class="small"><strong>{{ $summary['kind'] === 'ventas' ? 'Ventas' : 'Recibos' }}:</strong> {{ $summary['count'] }}</p>
 @if ($summary['operators'])<p class="small"><strong>Operadores:</strong> {{ implode(', ', $summary['operators']) }}</p>@endif
 <br>
+@if ($summary['origins'])
+    <table width="100%" cellpadding="3">
+        @foreach ($summary['origins'] as $source => $amount)
+            <tr><td width="65%">Total {{ $source }}</td><td width="35%" align="right">${{ number_format((float) $amount, 2) }}</td></tr>
+        @endforeach
+    </table>
+@endif
 <table width="100%" cellpadding="4">
     <thead><tr><th width="65%" align="left">Medio de pago</th><th width="35%" align="right">Monto USD</th></tr></thead>
     <tbody>

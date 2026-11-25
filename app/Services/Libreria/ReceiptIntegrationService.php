@@ -102,6 +102,8 @@ class ReceiptIntegrationService
 
         return $db->transaction(function () use ($db, $key, $payload, $effect): array {
             if ($db->getDriverName() === 'pgsql') {
+                // Transaction-local: V2 compatibility rows are not new V1 cash movements.
+                $db->select("SELECT set_config('libreria.cash_source', 'v2', true)");
                 $db->select("SELECT pg_advisory_xact_lock(hashtext('libreria.recibo.operacion'), hashtext(?))", [$key]);
             }
             $hash = hash('sha256', json_encode($payload, JSON_THROW_ON_ERROR));

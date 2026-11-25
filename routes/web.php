@@ -8,6 +8,7 @@ use App\Http\Controllers\Contaduria\DteCounterController;
 use App\Http\Controllers\Contaduria\PackageController;
 use App\Http\Controllers\Libreria\CashReconciliationController;
 use App\Http\Controllers\Libreria\CashRegisterController;
+use App\Http\Controllers\Libreria\LegacyCashBridgeController;
 use App\Http\Controllers\Libreria\ReceiptController;
 use App\Http\Controllers\Libreria\SaleClientController;
 use App\Http\Controllers\Libreria\SaleController;
@@ -43,6 +44,10 @@ Route::middleware([
     ResolvePuntoVentaById::class,
 ])->group(function () {
     Route::view('dashboard', 'dashboard')->name('dashboard');
+    Route::get('libreria/cajas/integracion-v1/{register}', [LegacyCashBridgeController::class, 'show'])
+        ->where('register', 'P00[123]')->middleware('can:libreria.arqueos.revisar')->name('libreria.cajas.legacy.show');
+    Route::post('libreria/cajas/integracion-v1/{register}', [LegacyCashBridgeController::class, 'confirm'])
+        ->where('register', 'P00[123]')->middleware('can:libreria.arqueos.revisar')->name('libreria.cajas.legacy.confirm');
     Route::prefix('libreria/cajas')->name('libreria.cajas.')->controller(CashRegisterController::class)->group(function () {
         Route::get('/', 'index')->middleware('can:libreria.cajas.ver')->name('index');
         Route::post('abrir', 'open')->middleware('can:libreria.cajas.abrir')->name('open');
