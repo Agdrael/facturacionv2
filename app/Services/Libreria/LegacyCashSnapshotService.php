@@ -37,19 +37,23 @@ class LegacyCashSnapshotService
         $receipts = DB::table('public.recibos')->whereIn('id', $movements->where('kind', 'recibo')->pluck('legacy_id'))->orderBy('id')->get();
         $this->require($sales->count() + $receipts->count() === $movements->count(), 'Un movimiento V1 fue eliminado. Revisa el corte antes de cerrar.');
         $payments = DB::table('public.metodos_pago_venta')->whereIn('id_venta', $sales->pluck('id_venta'))->get()->groupBy('id_venta');
-        $nativeUuids = DB::table('libreria.venta_dtes')->whereIn('codigo_generacion', $sales->pluck('numero_factura'))->pluck('codigo_generacion')->all();
+        $legacyUuids = $sales->pluck('numero_factura')->map(fn ($uuid): string => strtolower(trim((string) $uuid)))->all();
+        // Cast the native UUID to text, not historical text to UUID: old references may not be valid UUIDs.
+        $nativeUuids = DB::table('libreria.venta_dtes')->whereIn(DB::raw('LOWER(CAST(codigo_generacion AS TEXT))'), $legacyUuids)
+            ->pluck('codigo_generacion')->map(fn ($uuid): string => strtolower((string) $uuid))->all();
         $nativeNumbers = DB::table('libreria.venta_dtes')->whereIn('numero_control', $sales->pluck('numero_control'))->pluck('numero_control')->all();
         $mirrors = DB::table('public.libreria_recibo_documentos')->whereIn('legacy_receipt_id', $receipts->pluck('id'))->pluck('legacy_receipt_id')->all();
         $lines = [];
         $seen = [];
         foreach ($sales as $sale) {
-            if ($sale->anulado || (string) $sale->operacion === '05' || in_array($sale->numero_factura, $nativeUuids, true)) {
+            $uuid = strtolower(trim((string) $sale->numero_factura));
+            if ($sale->anulado || (string) $sale->operacion === '05' || in_array($uuid, $nativeUuids, true)) {
                 continue;
             }
             $this->require(! empty($sale->numero_factura) && in_array((string) $sale->operacion, ['1', '2', '3'], true), 'La venta V1 #'.$sale->id_venta.' no identifica UUID y operación válidos.');
             $this->require(! in_array($sale->numero_control, $nativeNumbers, true), 'El número '.$sale->numero_control.' está duplicado entre V1 y V2 con UUID distintos.');
-            $this->require(! isset($seen['uuid:'.$sale->numero_factura]) && ! isset($seen['number:'.$sale->numero_control]), 'V1 tiene un UUID o número de control duplicado.');
-            $seen['uuid:'.$sale->numero_factura] = $seen['number:'.$sale->numero_control] = true;
+            $this->require(! isset($seen['uuid:'.$uuid]) && ! isset($seen['number:'.$sale->numero_control]), 'V1 tiene un UUID o número de control duplicado.');
+            $seen['uuid:'.$uuid] = $seen['number:'.$sale->numero_control] = true;
             $this->require((bool) preg_match('/^DTE-(01|03)-[A-Z0-9]{4}'.preg_quote($register, '/').'-[0-9]+$/', $sale->numero_control), 'El documento V1 #'.$sale->id_venta.' no identifica una caja y tipo válidos.');
             $total = $this->cents($sale->total);
             $this->require($total >= 0, 'La venta V1 '.$sale->numero_control.' tiene un importe negativo sin anulación.');

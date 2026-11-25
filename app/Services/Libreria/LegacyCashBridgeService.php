@@ -95,7 +95,8 @@ class LegacyCashBridgeService
             $sales = DB::table('public.ventas as v')->where('v.numero_control', 'like', '%'.$register.'-%')->where('v.fecha_sistema', '>=', $start)
                 ->where(fn ($query) => $query->whereNull('v.anulado')->orWhere('v.anulado', false))
                 ->where(fn ($query) => $query->whereNull('v.operacion')->orWhere('v.operacion', '!=', '05'))
-                ->whereNotExists(fn ($query) => $query->selectRaw('1')->from('libreria.venta_dtes as d')->whereColumn('d.codigo_generacion', 'v.numero_factura'))->get();
+                ->whereNotExists(fn ($query) => $query->selectRaw('1')->from('libreria.venta_dtes as d')
+                    ->whereRaw('LOWER(CAST(d.codigo_generacion AS TEXT)) = LOWER(TRIM(CAST(v.numero_factura AS TEXT)))'))->get();
             foreach ($sales as $sale) {
                 $timestamp = $this->saleDate($sale->fecha_sistema, $sale->hora);
                 $matches = $timestamp === null ? collect() : $sessions->filter(fn ($turn): bool => $timestamp->greaterThanOrEqualTo(CarbonImmutable::parse($turn->opened_at))

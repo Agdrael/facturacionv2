@@ -53,7 +53,7 @@ test('joint closure requires initial receipt confirmation and imports each sourc
     DB::table('libreria.receipt_lines')->insert(['receipt_id' => $nativeReceipt, 'kind' => 'general', 'amount' => '10.00']);
     $nativeSale = DB::table('libreria.ventas')->insertGetId(['total' => '20.00', 'operacion' => '1', 'tipo_documento' => '01', 'estado' => 'GENERADO', 'caja_sesion_id' => $native->id]);
     DB::table('libreria.venta_dtes')->insert(['venta_id' => $nativeSale, 'numero_control' => 'DTE-01-S004P001-000000000000099',
-        'codigo_generacion' => 'native-uuid', 'pagos' => json_encode(['received' => [['method' => '01', 'amount' => '25.00']], 'change' => '5.00']),
+        'codigo_generacion' => 'bbbbbbbb-1111-4111-8111-111111111111', 'pagos' => json_encode(['received' => [['method' => '01', 'amount' => '25.00']], 'change' => '5.00']),
         'cliente' => json_encode(['name' => 'Persona V2']), 'transmision_estado' => 'PENDIENTE', 'user_id' => $user->id]);
     $mirror = legacyCashReceipt(['nombre_cliente' => 'Copia ya emitida por V2', 'precio' => '99.00']);
     DB::table('public.libreria_recibo_documentos')->insert(['legacy_receipt_id' => $mirror, 'receipt_uuid' => '00000000-0000-4000-8000-000000000001', 'line_id' => 1]);
@@ -232,4 +232,29 @@ test('duplicate V1 boxes prevent activation and the unsupported register remains
     expect(fn () => app(LegacyCashBridgeService::class)->activate('P001'))->toThrow(ValidationException::class, 'única caja');
     expect(app(LegacyCashBridgeService::class)->active('P001'))->toBeFalse();
     $this->artisan('cash:legacy-bridge activate --register=P004')->assertFailed();
+});
+
+test('activation and closure compare native UUIDs with legacy text without counting copied invoices twice', function () {
+    $user = prepareLegacyCashDatabase($this);
+    $cash = app(CashRegisterService::class);
+    $session = $cash->open($user);
+    $uuid = 'abcdefab-1234-4567-8123-123456789abc';
+    $number = 'DTE-01-S004P001-000000000000099';
+    $nativeId = DB::table('libreria.ventas')->insertGetId(['total' => '10.00', 'operacion' => '1', 'tipo_documento' => '01',
+        'estado' => 'GENERADO', 'caja_sesion_id' => $session->id]);
+    DB::table('libreria.venta_dtes')->insert(['venta_id' => $nativeId, 'numero_control' => $number, 'codigo_generacion' => $uuid,
+        'pagos' => json_encode(['received' => [['method' => '01', 'amount' => '10.00']], 'change' => '0.00']),
+        'cliente' => json_encode(['name' => 'Cliente V2']), 'transmision_estado' => 'PENDIENTE', 'user_id' => $user->id]);
+    legacyCashSale(['numero_factura' => strtoupper($uuid), 'numero_control' => $number]);
+    // A historical non-UUID value must not be cast to PostgreSQL uuid either.
+    legacyCashSale(['numero_factura' => 'referencia-antigua', 'numero_control' => 'DTE-01-S004P001-000000000000001']);
+    $bridge = app(LegacyCashBridgeService::class);
+    $bridge->activate('P001');
+    expect(DB::table('libreria.legacy_cash_movements')->where('kind', 'venta')->count())->toBe(1);
+    // Also exercise the close query on a copy written after activation.
+    legacyCashSale(['numero_factura' => strtoupper($uuid), 'numero_control' => $number]);
+    $record = $cash->close($user, $session->id);
+    expect($record->snapshot)->toMatchArray(['total' => '20.00', 'collections' => '20.00', 'methods' => ['01' => '20.00']]);
+    expect($record->snapshot['sales'])->toHaveCount(2);
+    expect($bridge->active('P001'))->toBeTrue();
 });

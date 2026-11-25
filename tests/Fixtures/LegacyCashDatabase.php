@@ -44,7 +44,7 @@ function prepareLegacyCashDatabase(TestCase $test): User
         CREATE TABLE public.inicio_cierre_caja (id bigserial PRIMARY KEY, id_caja integer, fecha date DEFAULT CURRENT_DATE,
             hora_inicio time DEFAULT CURRENT_TIME, hora_cierre time, codigo_reapertura text, motivo_reapertura text);
         CREATE TABLE public.clientes (id serial PRIMARY KEY, nombre text);
-        CREATE TABLE public.ventas (id_venta serial PRIMARY KEY, numero_factura text, numero_control text, fecha_sistema date,
+        CREATE TABLE public.ventas (id_venta serial PRIMARY KEY, numero_factura varchar(62), numero_control text, fecha_sistema date,
             hora text, anulado boolean, operacion text DEFAULT '."'1'".', total numeric(26,6), id_cliente integer, id_usuario integer, sello_recepcion text);
         CREATE TABLE public.metodos_pago_venta (id serial PRIMARY KEY, id_venta integer, forma_pago text,
             efectivo numeric(18,8), remesa numeric(18,8), tarjetac numeric(18,8), tarjetad numeric(18,8), linea numeric(18,8), qr numeric(18,8), bitcoin numeric(18,8), cheque numeric(18,8));
@@ -52,7 +52,7 @@ function prepareLegacyCashDatabase(TestCase $test): User
             numero_caja text, precio numeric(26,6), tarjeta boolean, anulado boolean, codigo_recibo text, cuenta_abono text, cuenta_cargo text, observacion text);
         CREATE TABLE public.libreria_recibo_documentos (legacy_receipt_id bigint PRIMARY KEY, receipt_uuid uuid, line_id bigint);
         CREATE TABLE libreria.ventas (id bigserial PRIMARY KEY, total numeric(18,2), operacion text, tipo_documento text, estado text);
-        CREATE TABLE libreria.venta_dtes (id bigserial PRIMARY KEY, venta_id bigint, numero_control text, codigo_generacion text,
+        CREATE TABLE libreria.venta_dtes (id bigserial PRIMARY KEY, venta_id bigint, numero_control text, codigo_generacion uuid,
             pagos text, cliente text, transmision_estado text, user_id bigint);
         CREATE TABLE libreria.venta_invalidaciones (id bigserial PRIMARY KEY, venta_dte_id bigint, aplicada_at timestamptz);
     ');
