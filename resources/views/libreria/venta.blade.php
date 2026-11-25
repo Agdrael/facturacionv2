@@ -61,7 +61,7 @@
                 <div x-ref="productScroll" class="min-h-0 flex-1 overflow-auto">
                     <table class="sale-workspace-table w-full text-left text-sm" x-show="items.length">
                         <thead class="sticky top-0 z-10 bg-zinc-100 text-zinc-500 dark:bg-[#292925] dark:text-zinc-400">
-                            <tr><th>Producto</th><th class="text-center!">Cant.</th><th class="text-right!">Precio</th><th class="text-center!">Desc. %</th><th class="text-right!">Importe</th><th><span class="sr-only">Quitar</span></th></tr>
+                            <tr><th>Producto</th><th class="text-center!">Cant.</th><th class="text-right!">Precio</th><th class="text-center!">Desc. %</th><th class="text-right!">Descuento $</th><th class="text-right!">Importe</th><th><span class="sr-only">Quitar</span></th></tr>
                         </thead>
                         <tbody class="divide-y divide-zinc-200 dark:divide-brand-paper/5">
                             <template x-for="item in items" :key="item.id">
@@ -83,6 +83,7 @@
                                         </template>
                                     </td>
                                     <td class="text-center"><input class="sale-number w-14!" type="number" min="0" max="100" step="0.01" x-model.number="item.discount" x-bind:readonly="!canDiscount(item)" :aria-label="`Descuento de ${item.name}`" x-on:change="item.discount = canDiscount(item) ? Math.min(100, Math.max(0, Number(item.discount) || 0)) : 0" /></td>
+                                    <td class="whitespace-nowrap text-right text-[13px] font-medium tabular-nums" :class="lineDiscount(item) + lineGeneralDiscount(item) > 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-zinc-400'" x-text="lineDiscount(item) + lineGeneralDiscount(item) > 0 ? '− ' + money(lineDiscount(item) + lineGeneralDiscount(item)) : '—'" title="Descuento del producto más su descuento general"></td>
                                     <td class="text-right text-[13px] font-semibold tabular-nums" x-text="money(lineTotal(item))"></td>
                                     <td class="w-10"><flux:button size="xs" variant="ghost" icon="x-mark" x-on:click="removeProduct(item.id)" x-bind:aria-label="`Quitar ${item.name}`" /></td>
                                 </tr>
