@@ -5,6 +5,7 @@ use App\Services\Libreria\SaleTicketService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Http;
+use Symfony\Component\Process\Process;
 use Tests\TestCase;
 
 require_once __DIR__.'/../../../../Fixtures/DteDatabase.php';
@@ -83,9 +84,27 @@ test('generated invoices provide a private printable PDF ticket with the origina
     $url = app(SaleTicketService::class)->consultationUrl($document);
     parse_str(parse_url($url, PHP_URL_QUERY), $query);
     expect($query)->toBe(['ambiente' => $document['identificacion']['ambiente'], 'codGen' => $result->json('uuid'), 'fechaEmi' => '2026-11-11']);
+    $code = <<<'PHP'
+define('K_PATH_CACHE', getcwd().'/artisan/');
+require 'vendor/autoload.php';
+$app = require 'bootstrap/app.php';
+$app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
+echo $app->make(App\Services\Libreria\SaleTicketService::class)->render(json_decode(stream_get_contents(STDIN)));
+PHP;
+    $process = new Process([PHP_BINARY, '-r', $code], base_path(), null, json_encode($row, JSON_THROW_ON_ERROR));
+    $process->mustRun();
+    expect($process->getOutput())->toStartWith('%PDF-')->not->toContain('/Subtype /Image');
     $this->actingAs(User::factory()->make(['id' => 8]));
     grantTestRoles(auth()->user(), ['libreria']);
     $this->get($result->json('ticketUrl'))->assertForbidden();
+    $this->getJson(route('libreria.ventas.history'))->assertOk()->assertJsonPath('data.0.canPrint', false);
+    foreach (['admin', 'contador'] as $role) {
+        grantTestRoles(auth()->user(), [$role]);
+        $this->getJson(route('libreria.ventas.history'))->assertOk()->assertJsonPath('data.0.canPrint', true)
+            ->assertJsonPath('data.0.canManage', false)->assertJsonPath('data.0.canDownload', false);
+        $this->get($result->json('ticketUrl'))->assertOk()->assertHeader('content-type', 'application/pdf');
+        $this->get(route('libreria.ventas.download', $result->json('id')))->assertForbidden();
+    }
 });
 
 test('a generation writes one sale and separates consigned and own stock in one inventory document', function () {

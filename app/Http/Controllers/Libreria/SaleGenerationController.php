@@ -63,6 +63,9 @@ class SaleGenerationController extends Controller
 
     public function history(Request $request): JsonResponse
     {
+        $user = $request->user();
+        abort_unless($user instanceof User, 403);
+        $canPrintOthers = $user->hasRole(['admin', 'contador']);
         $canTransmit = $request->user()->can('libreria.ventas.transmitir');
         $canRetry = $canTransmit && $request->user()->can('libreria.ventas.reintentar');
         $canDownload = $request->user()->can('libreria.ventas.descargar');
@@ -76,7 +79,7 @@ class SaleGenerationController extends Controller
             'total' => (int) round((float) $row->total * 100), 'status' => $row->aplicada_at !== null ? 'Anulada' : ($row->invalidacion_estado !== null ? 'Invalidación: '.$row->invalidacion_estado : ($row->guardado_externo_at === null ? 'Guardado pendiente' : $this->transmissionLabel($row->transmision_estado))),
             'operator' => $row->name, 'date' => CarbonImmutable::parse($row->created_at)->setTimezone('America/El_Salvador')->toDateString(),
             'ticketUrl' => route('libreria.ventas.ticket', $row->id),
-            'canPrint' => (int) $row->user_id === (int) $request->user()?->getAuthIdentifier(),
+            'canPrint' => $canPrintOthers || (int) $row->user_id === (int) $user->getAuthIdentifier(),
             'canManage' => (int) $row->user_id === (int) $request->user()?->getAuthIdentifier() && ($canRetry || $canTransmit || $canDownload),
             'canRetry' => $canRetry && (int) $row->user_id === (int) $request->user()?->getAuthIdentifier(),
             'canTransmit' => $canTransmit && (int) $row->user_id === (int) $request->user()?->getAuthIdentifier(),

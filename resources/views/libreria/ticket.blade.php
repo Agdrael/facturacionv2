@@ -1,3 +1,4 @@
+@fragment('styles')
 <style>
     h1 { font-size: 11pt; text-align: center; }
     h2 { font-size: 9pt; text-align: center; }
@@ -8,11 +9,13 @@
     td { padding: 3px 0; }
     .total { font-size: 11pt; font-weight: bold; }
 </style>
+@endfragment
 @php
     $id = $document['identificacion'];
     $emitter = $document['emisor'];
     $summary = $document['resumen'];
 @endphp
+@fragment('header')
 <h1>{{ $emitter['nombreComercial'] ?? $emitter['nombre'] }}</h1>
 <p class="center small">{{ $emitter['nombre'] }}</p>
 <p class="center small">NIT: {{ $emitter['nit'] }} · NRC: {{ $emitter['nrc'] }}</p>
@@ -21,7 +24,8 @@
 <h2>{{ $id['tipoDte'] === '03' ? 'COMPROBANTE DE CRÉDITO FISCAL' : 'FACTURA' }} ELECTRÓNICA</h2>
 @if ($id['ambiente'] !== '01')<p class="center"><strong>AMBIENTE DE PRUEBAS</strong></p>@endif
 @if ($journal->anulado ?? false)<h2>DOCUMENTO ANULADO</h2>@endif
-<p class="center"><br><img src="{{ '@'.$qrImage }}" width="40mm" height="40mm" /><br></p>
+@endfragment
+@fragment('detail')
 <table width="100%" cellpadding="2">
     <thead><tr><th width="68%">Descripción</th><th width="32%" align="right">Importe</th></tr></thead>
     <tbody>
@@ -46,3 +50,4 @@
 @endforeach
 @if ($summary['observaciones'] ?? null)<p class="small"><strong>Observaciones:</strong> {{ $summary['observaciones'] }}</p>@endif
 <p class="center small">Representación gráfica del DTE</p>
+@endfragment

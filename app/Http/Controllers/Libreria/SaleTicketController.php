@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Libreria;
 
 use App\Http\Controllers\Controller;
+use App\Models\User;
 use App\Services\Libreria\SaleTicketService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -14,7 +15,9 @@ class SaleTicketController extends Controller
     {
         $row = DB::table('libreria.venta_dtes')->where('id', $journal)->first();
         abort_if($row === null, 404);
-        abort_unless((int) $row->user_id === (int) $request->user()->getAuthIdentifier(), 403);
+        $user = $request->user();
+        abort_unless($user instanceof User, 403);
+        abort_unless((int) $row->user_id === (int) $user->getAuthIdentifier() || $user->hasRole(['admin', 'contador']), 403);
         $row->anulado = DB::table('libreria.ventas')->where('id', $row->venta_id)->value('estado') === 'ANULADO';
 
         return response($tickets->render($row), 200, [
