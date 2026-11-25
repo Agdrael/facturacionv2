@@ -96,9 +96,9 @@
                     </div>
                 </div>
 
-                <div class="flex shrink-0 items-center gap-3 border-t border-zinc-200 px-4 py-3 dark:border-brand-paper/10">
-                    <flux:icon.chat-bubble-bottom-center-text class="size-4 shrink-0 text-zinc-400" />
-                    <input x-model="observation" maxlength="500" class="w-full rounded bg-transparent text-xs placeholder:text-zinc-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-yellow dark:placeholder:text-zinc-500" placeholder="Agregar una observación de la venta…" aria-label="Observación de la venta" />
+                <div class="flex shrink-0 items-start gap-3 border-t border-brand-yellow/30 bg-brand-yellow/10 px-4 py-4">
+                    <div class="mt-1 shrink-0 rounded-lg bg-brand-yellow/25 p-2 text-brand-ink"><flux:icon.chat-bubble-bottom-center-text class="size-5" /></div>
+                    <div class="min-w-0 flex-1"><flux:textarea label="Observación de la venta (opcional)" x-model="observation" maxlength="500" rows="2" resize="none" class="min-h-20 bg-white! text-base! leading-relaxed! text-brand-ink! placeholder:text-zinc-500!" placeholder="Escribe aquí una indicación o detalle importante de esta venta…" /></div>
                 </div>
 
                 <footer class="sale-totals flex shrink-0 flex-wrap items-center justify-between gap-4 border-t px-5 py-4">
