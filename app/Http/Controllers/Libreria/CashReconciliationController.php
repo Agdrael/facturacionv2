@@ -99,6 +99,16 @@ class CashReconciliationController extends Controller
         return back()->with('status', 'Excel entregado. Está pendiente de revisión y firma.');
     }
 
+    public function refreshTemplate(Request $request, int $reconciliation, CashWorkbookService $files): RedirectResponse
+    {
+        $record = $this->authorized($request, $reconciliation, 'cargar');
+        $updated = $files->refreshTemplate($record, $request->user());
+
+        return back()->with('status', $updated
+            ? 'Plantilla actualizada. Se conservaron los archivos anteriores y los datos manuales ya entregados. Descarga el original actualizado y vuelve a entregar el Excel para revisión.'
+            : 'El original ya utiliza la plantilla actual. Puedes descargarlo.');
+    }
+
     public function review(Request $request, int $reconciliation, CashWorkbookService $files): RedirectResponse
     {
         $record = $this->authorized($request, $reconciliation, 'revisar');

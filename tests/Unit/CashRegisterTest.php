@@ -16,6 +16,7 @@ use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use PhpOffice\PhpSpreadsheet\IOFactory;
+use PhpOffice\PhpSpreadsheet\Style\Protection;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use Tests\TestCase;
 
@@ -61,12 +62,15 @@ function cashClosedRecord(TestCase $test): CashReconciliation
 }
 
 /** @param array<string, mixed> $changes */
-function cashEditedWorkbook(CashReconciliation $record, array $changes = []): UploadedFile
+function cashEditedWorkbook(CashReconciliation $record, array $changes = [], ?Closure $edit = null): UploadedFile
 {
     $path = app(CashWorkbookService::class)->original($record, auth()->user());
     $book = IOFactory::load(Storage::disk('cash')->path($path));
     foreach ($changes as $cell => $value) {
         $book->getSheetByName('Arqueo')->setCellValue($cell, $value);
+    }
+    if ($edit !== null) {
+        $edit($book);
     }
     $path = tempnam(sys_get_temp_dir(), 'cash-test-');
     $writer = new Xlsx($book);
@@ -251,6 +255,159 @@ test('Excel delivery preserves system totals while permitting physical counts an
         ->assertSessionHasErrors('archivo');
 });
 
+test('cash workbook subtracts partial remittances and accepts counted third party checks without changing expected amounts', function () {
+    prepareCashControl($this);
+    $record = cashClosedRecord($this);
+    $changes = ['D5' => 500, 'D21' => 10, 'D22' => 20, 'D23' => 25, 'D24' => 50,
+        'K29' => 120, 'K30' => 30, 'C35' => 'CH-001', 'D35' => 'Beneficiario', 'K35' => 200, 'K36' => 100];
+    $file = cashEditedWorkbook($record, $changes);
+    $book = IOFactory::load($file->getPathname());
+    $sheet = $book->getSheetByName('Arqueo');
+    expect($sheet->getCell('K11')->getCalculatedValue())->toEqual(125);
+    expect($sheet->getCell('K12')->getCalculatedValue())->toEqual(250);
+    expect($sheet->getCell('K13')->getCalculatedValue())->toEqual(845);
+    expect($sheet->getCell('K38')->getCalculatedValue())->toEqual(300);
+    expect($sheet->getCell('J48')->getValue())->toEqual(0);
+    expect($sheet->getStyle('K35')->getProtection()->getLocked())->toBe(Protection::PROTECTION_UNPROTECTED);
+    $book->disconnectWorksheets();
+    $this->post(route('libreria.arqueos.upload', $record->id), ['archivo' => $file])->assertSessionHasNoErrors();
+    expect($record->fresh()->snapshot)->toBe($record->snapshot);
+    foreach ([['K13' => 1], ['K35' => -1], ['K35' => '=1+1']] as $invalid) {
+        $this->post(route('libreria.arqueos.upload', $record->id), ['archivo' => cashEditedWorkbook($record, $invalid)])
+            ->assertSessionHasErrors('archivo');
+    }
+});
+
+test('cash workbook includes every recorded check when its initial detail exceeds three rows', function () {
+    prepareCashControl($this);
+    $record = cashClosedRecord($this);
+    $snapshot = $record->snapshot;
+    $sample = $snapshot['sales'][0];
+    $snapshot['sales'] = [];
+    foreach ([10, 20, 30, 40] as $index => $amount) {
+        $snapshot['sales'][] = array_replace($sample, ['number' => 'CHEQUE-'.($index + 1), 'total' => (string) $amount, 'payments' => ['04' => (string) $amount]]);
+    }
+    $snapshot['methods'] = ['04' => '100.00'];
+    $snapshot['total'] = '100.00';
+    $snapshot['documents'] = ['01' => '100.00'];
+    $record->snapshot = $snapshot;
+    $book = app(CashWorkbookService::class)->build($record);
+    $sheet = $book->getSheetByName('Arqueo');
+    expect($sheet->getCell('K38')->getCalculatedValue())->toEqual(100);
+    expect($sheet->getCell('K37')->getValue())->toEqual(70);
+    expect($sheet->getCell('J48')->getValue())->toEqual(100);
+    expect($sheet->getCell('C37')->getValue())->toBe('2 cheques (ver Resumen)');
+    $book->disconnectWorksheets();
+});
+
+test('Excel accepts extra check rows and editable sums while preserving the closed amounts', function () {
+    prepareCashControl($this);
+    $record = cashClosedRecord($this);
+    $file = cashEditedWorkbook($record, [], function ($book): void {
+        $sheet = $book->getSheetByName('Arqueo');
+        $sheet->insertNewRowBefore(32, 2);
+        $sheet->insertNewRowBefore(40, 4);
+        $sheet->setCellValue('D5', 100);
+        foreach ([10, 20, 30, 40, 50] as $offset => $amount) {
+            $sheet->setCellValue('C'.(29 + $offset), 'PROPIO-'.$offset);
+            $sheet->setCellValue('K'.(29 + $offset), $amount);
+        }
+        foreach (range(1, 7) as $offset => $amount) {
+            $sheet->setCellValue('C'.(37 + $offset), 'AJENO-'.$offset);
+            $sheet->setCellValue('K'.(37 + $offset), $amount);
+        }
+        $sheet->setCellValue('K34', '=SUM(K29:K33)');
+        $sheet->setCellValue('K44', '=SUM($K$37:$K$43)');
+    });
+    $book = IOFactory::load($file->getPathname());
+    $sheet = $book->getSheetByName('Arqueo');
+    expect($sheet->getProtection()->getInsertRows())->toBeFalse();
+    expect($sheet->getCell('K34')->getCalculatedValue())->toEqual(150);
+    expect($sheet->getCell('K44')->getCalculatedValue())->toEqual(28);
+    expect($sheet->getCell('K13')->getCalculatedValue())->toEqual(278);
+    expect($sheet->getCell('D54')->getValue())->toEqual(56.50);
+    $book->disconnectWorksheets();
+    $this->post(route('libreria.arqueos.upload', $record->id), ['archivo' => cashEditedWorkbook($record, ['K32' => 150, 'K38' => 28])])->assertSessionHasNoErrors();
+    $this->post(route('libreria.arqueos.upload', $record->id), ['archivo' => $file])->assertSessionHasNoErrors();
+    expect($record->fresh()->snapshot)->toBe($record->snapshot);
+    $record->refresh();
+    $version = hash('sha256', $record->entregado_path);
+    $this->post(route('libreria.arqueos.review', $record->id), ['version' => $version])->assertSessionHasNoErrors();
+    $this->post(route('libreria.arqueos.sign', $record->id), ['version' => $version, 'firma' => cashTestSignature(), 'confirmed' => '1'])->assertSessionHasNoErrors();
+    $record->refresh();
+    $signed = IOFactory::load(Storage::disk('cash')->path($record->firmado_path));
+    expect($signed->getSheetByName('Arqueo')->getCell('K44')->getCalculatedValue())->toEqual(28);
+    expect($record->estado)->toBe('firmado');
+    $signed->disconnectWorksheets();
+});
+
+test('Excel rejects added rows outside checks and sum references outside their own check block', function () {
+    prepareCashControl($this);
+    $record = cashClosedRecord($this);
+    $outside = cashEditedWorkbook($record, [], fn ($book) => $book->getSheetByName('Arqueo')->insertNewRowBefore(20));
+    $this->post(route('libreria.arqueos.upload', $record->id), ['archivo' => $outside])->assertSessionHasErrors('archivo');
+    foreach ([['K32' => '=SUM(K6:K9)'], ['K38' => '=SUM(K29:K31)'], ['K38' => -1], ['D48' => 1]] as $invalid) {
+        $this->post(route('libreria.arqueos.upload', $record->id), ['archivo' => cashEditedWorkbook($record, $invalid)])->assertSessionHasErrors('archivo');
+    }
+    $tampered = cashEditedWorkbook($record, [], function ($book): void {
+        $sheet = $book->getSheetByName('Arqueo');
+        $sheet->insertNewRowBefore(38, 3);
+        $sheet->setCellValue('D51', 1);
+    });
+    $this->post(route('libreria.arqueos.upload', $record->id), ['archivo' => $tampered])->assertSessionHasErrors('archivo');
+});
+
+test('updating an unsigned workbook preserves previous versions and entered data and requires a new delivery', function () {
+    prepareCashControl($this);
+    $record = cashClosedRecord($this);
+    $files = app(CashWorkbookService::class);
+    $oldPath = $files->original($record, auth()->user());
+    $book = IOFactory::load(Storage::disk('cash')->path($oldPath));
+    $book->getSheetByName('_Control')->setCellValue('A4', '2');
+    $book->getSheetByName('Arqueo')->setCellValue('K13', '=SUM(K10:K12)');
+    $book->getSheetByName('Arqueo')->setCellValue('K38', 0);
+    $writer = new Xlsx($book);
+    $writer->setPreCalculateFormulas(false);
+    $writer->save(Storage::disk('cash')->path($oldPath));
+    $book->disconnectWorksheets();
+    $oldUpload = cashEditedWorkbook($record, ['D5' => 6, 'K29' => 120, 'K35' => 9.50, 'C35' => 'CHEQUE-MANUAL', 'C50' => 'Datos ya entregados']);
+    $this->post(route('libreria.arqueos.upload', $record->id), ['archivo' => $oldUpload])->assertSessionHasNoErrors();
+    $record->refresh();
+    $deliveredPath = $record->entregado_path;
+    $this->post(route('libreria.arqueos.review', $record->id), ['version' => hash('sha256', $deliveredPath)])->assertSessionHasNoErrors();
+    $this->post(route('libreria.arqueos.template', $record->id))->assertRedirect()->assertSessionHasNoErrors();
+    $record->refresh();
+    expect($record->original_path)->not->toBe($oldPath);
+    expect($record->estado)->toBe('pendiente_excel');
+    expect($record->entregado_path)->toBeNull();
+    expect($record->revisado_at)->toBeNull();
+    expect($record->archivos)->toHaveCount(3);
+    Storage::disk('cash')->assertExists([$oldPath, $deliveredPath, $record->original_path]);
+    $book = IOFactory::load(Storage::disk('cash')->path($record->original_path));
+    $sheet = $book->getSheetByName('Arqueo');
+    expect($sheet->getCell('D5')->getValue())->toEqual(6);
+    expect($sheet->getCell('K29')->getValue())->toEqual(120);
+    expect($sheet->getCell('K35')->getValue())->toEqual(9.50);
+    expect($sheet->getCell('C35')->getValue())->toBe('CHEQUE-MANUAL');
+    expect($sheet->getCell('C50')->getValue())->toBe('Datos ya entregados');
+    expect($sheet->getCell('K13')->getValue())->toBe('=SUM(K10:K12)-SUM(K21:K22)');
+    expect($sheet->getStyle('K35')->getProtection()->getLocked())->toBe(Protection::PROTECTION_UNPROTECTED);
+    $book->disconnectWorksheets();
+    $this->post(route('libreria.arqueos.upload', $record->id), ['archivo' => $oldUpload])->assertSessionHasErrors('archivo');
+    $this->post(route('libreria.arqueos.upload', $record->id), ['archivo' => cashEditedWorkbook($record, ['K35' => 9.50])])->assertSessionHasNoErrors();
+    $record->refresh();
+    $newPath = $record->original_path;
+    $count = count($record->archivos);
+    $this->post(route('libreria.arqueos.template', $record->id))->assertSessionHasNoErrors();
+    expect($record->fresh()->original_path)->toBe($newPath);
+    expect($record->fresh()->estado)->toBe('recibido');
+    expect($record->fresh()->archivos)->toHaveCount($count);
+    auth()->user()->roles()->sync([Role::query()->where('code', 'libreria')->sole()->id]);
+    auth()->user()->setAttribute('puntoventa', 'P002');
+    $this->post(route('libreria.arqueos.template', $record->id))->assertForbidden();
+    expect($record->fresh()->archivos)->toHaveCount($count);
+});
+
 test('review and signature apply to the delivered version and signed workbooks cannot be replaced', function () {
     prepareCashControl($this);
     $record = cashClosedRecord($this);
@@ -266,6 +423,8 @@ test('review and signature apply to the delivered version and signed workbooks c
     expect($book->getSheetByName('Arqueo')->getDrawingCollection()->count())->toBeGreaterThan(0);
     $book->disconnectWorksheets();
     $this->post(route('libreria.arqueos.upload', $record->id), ['archivo' => cashEditedWorkbook($record)])->assertSessionHasErrors('archivo');
+    $this->post(route('libreria.arqueos.template', $record->id))->assertSessionHasErrors('archivo');
+    expect($record->fresh()->archivos)->toHaveCount(4);
     $this->get(route('libreria.arqueos.download', [$record->id, 'firmado']))->assertOk();
 });
 

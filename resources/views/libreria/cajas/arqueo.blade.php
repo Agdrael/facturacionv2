@@ -49,6 +49,17 @@
                 @can('libreria.arqueos.descargar')<flux:button :href="route('libreria.arqueos.download', [$record->id, 'original'])" icon="arrow-down-tray">Descargar original</flux:button>@endcan
                 @if ($record->firmado_at === null)
                     @can('libreria.arqueos.cargar')
+                        <p class="access-muted text-xs leading-5">Para más cheques, inserta filas en Excel justo antes del TOTAL de Cheques propios o Cheques ajenos. Puedes editar sus sumas como importe o usar SUMA sobre las filas de ese bloque. Las celdas inferiores cambiarán de número al insertar filas.</p>
+                        @if ($record->original_path !== null)
+                            <div class="space-y-2 rounded-xl border border-zinc-200 p-4 dark:border-zinc-700">
+                                <p class="text-sm font-medium">¿Descargaste una plantilla anterior?</p>
+                                <p class="access-muted text-xs leading-5">Actualiza las fórmulas y los campos de cheques. Se conservan las versiones anteriores; la plantilla actualizada requiere una nueva entrega y revisión. Los cambios que solo tengas en tu computadora debes copiarlos al archivo nuevo.</p>
+                                <form method="POST" action="{{ route('libreria.arqueos.template', $record->id) }}">
+                                    @csrf
+                                    <flux:button type="submit" size="sm">Actualizar plantilla</flux:button>
+                                </form>
+                            </div>
+                        @endif
                         <form method="POST" action="{{ route('libreria.arqueos.upload', $record->id) }}" enctype="multipart/form-data" class="space-y-4 border-t border-zinc-200 pt-5 dark:border-zinc-700">
                             @csrf
                             <label class="block text-sm font-medium" for="cash-workbook">Excel completado · máximo 10 MB</label>

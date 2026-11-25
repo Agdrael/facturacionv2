@@ -25,6 +25,10 @@ use ZipArchive;
 
 class CashWorkbookService
 {
+    private const TEMPLATE_REVISION = '3';
+
+    private const MAX_EXTRA_CHECK_ROWS = 1000;
+
     public function original(CashReconciliation $record, User $actor): string
     {
         return DB::transaction(function () use ($record, $actor): string {
@@ -54,6 +58,9 @@ class CashWorkbookService
             if ($record->firmado_at !== null) {
                 throw ValidationException::withMessages(['archivo' => 'El arqueo firmado no se puede sustituir.']);
             }
+            if ($record->original_path !== $original) {
+                throw ValidationException::withMessages(['archivo' => 'La plantilla cambió durante la entrega. Descarga el original actualizado antes de volver a subir el Excel.']);
+            }
             $expected = IOFactory::load(Storage::disk(config('cash.disk'))->path($original));
             try {
                 try {
@@ -73,6 +80,66 @@ class CashWorkbookService
             $this->put($path, file_get_contents($file->getPathname()));
             $this->rememberFile($record, $path, 'entregado', $actor);
             $record->update(['entregado_path' => $path, 'entregado_at' => now(), 'estado' => 'recibido', 'revisado_por' => null, 'revisado_at' => null]);
+        });
+    }
+
+    public function refreshTemplate(CashReconciliation $record, User $actor): bool
+    {
+        return DB::transaction(function () use ($record, $actor): bool {
+            $record = CashReconciliation::query()->lockForUpdate()->findOrFail($record->id);
+            if ($record->firmado_at !== null) {
+                throw ValidationException::withMessages(['archivo' => 'El arqueo firmado no se puede sustituir.']);
+            }
+            $disk = Storage::disk(config('cash.disk'));
+            $previous = null;
+            $source = null;
+            $book = null;
+            try {
+                if ($record->original_path !== null && $disk->exists($record->original_path)) {
+                    $previous = IOFactory::load($disk->path($record->original_path));
+                    if ((string) $previous->getSheetByName('_Control')?->getCell('A4')->getValue() === self::TEMPLATE_REVISION) {
+                        return false;
+                    }
+                }
+                $book = $this->build($record);
+                if ($record->entregado_path !== null) {
+                    if (! $disk->exists($record->entregado_path)) {
+                        throw ValidationException::withMessages(['archivo' => 'No se encuentra el Excel entregado. Recupera ese archivo antes de actualizar la plantilla.']);
+                    }
+                    $source = IOFactory::load($disk->path($record->entregado_path));
+                }
+                $manualSource = $source ?? $previous;
+                if ($manualSource !== null) {
+                    $from = $manualSource->getSheetByName('Arqueo');
+                    $to = $book->getSheetByName('Arqueo');
+                    $revision = (int) $manualSource->getSheetByName('_Control')?->getCell('A4')->getValue();
+                    $layout = $revision >= 3 ? $this->checkLayout($from) : ['own' => 0, 'third' => 0];
+                    $this->expandCheckRows($to, ['own' => 0, 'third' => 0], $layout);
+                    foreach ($from->getCellCollection()->getCoordinates() as $coordinate) {
+                        $manual = $this->manualType($coordinate, $layout);
+                        // Older revisions generated the totals and, before v2, the check detail.
+                        if ($manual === null || ($manual === 'sum' && $revision < 3)
+                            || ($revision < 2 && preg_match('/^[CK](35|36|37)$/', $coordinate))) {
+                            continue;
+                        }
+                        $cell = $from->getCell($coordinate);
+                        if ($cell->getValue() !== null && ($cell->getDataType() !== DataType::TYPE_FORMULA
+                            || ($manual === 'sum' && $this->validCheckSum($coordinate, (string) $cell->getValue(), $layout)))) {
+                            $to->getCell($coordinate)->setValueExplicit($cell->getValue(), $cell->getDataType());
+                        }
+                    }
+                }
+                $path = $this->storeBook($record, $book, 'original');
+                $this->rememberFile($record, $path, 'original', $actor);
+                $record->update(['original_path' => $path, 'entregado_path' => null, 'entregado_at' => null,
+                    'revisado_por' => null, 'revisado_at' => null, 'estado' => 'pendiente_excel']);
+
+                return true;
+            } finally {
+                $previous?->disconnectWorksheets();
+                $source?->disconnectWorksheets();
+                $book?->disconnectWorksheets();
+            }
         });
     }
 
@@ -152,13 +219,23 @@ class CashWorkbookService
         $sheet->setCellValue('F14', (float) ($snapshot['receiptTotal'] ?? 0));
         $sheet->setCellValue('D21', 0);
         $sheet->setCellValue('K10', '=SUM(K6,K9)');
-        $sheet->setCellValue('K38', (float) ($methods['04'] ?? 0));
+        $sheet->setCellValue('K11', '=K32-K23');
+        $sheet->setCellValue('K12', '=K38-K24');
+        $sheet->setCellValue('K13', '=SUM(K10:K12)-SUM(K21:K22)');
+        $sheet->setCellValue('K38', '=SUM(K35:K37)');
         $sheet->setCellValue('K44', (float) $snapshot['receivable']);
         $checks = array_values(array_filter([...$snapshot['sales'], ...($snapshot['receipts'] ?? [])], fn (array $sale): bool => BigDecimal::of($sale['payments']['04'] ?? '0')->isPositive()));
         foreach (array_slice($checks, 0, 3) as $index => $sale) {
             $row = 35 + $index;
-            $this->text($sheet, 'C'.$row, $sale['number']);
-            $sheet->setCellValue('K'.$row, (float) $sale['payments']['04']);
+            if ($index === 2 && count($checks) > 3) {
+                $remaining = array_slice($checks, 2);
+                $this->text($sheet, 'C'.$row, count($remaining).' cheques (ver Resumen)');
+                $sheet->setCellValue('K'.$row, (float) array_reduce($remaining,
+                    fn (BigDecimal $sum, array $check): BigDecimal => $sum->plus($check['payments']['04']), BigDecimal::zero())->__toString());
+            } else {
+                $this->text($sheet, 'C'.$row, $sale['number']);
+                $sheet->setCellValue('K'.$row, (float) $sale['payments']['04']);
+            }
             $sheet->getStyle('C'.$row)->getFont()->setSize(7);
             $sheet->getStyle('C'.$row)->getAlignment()->setWrapText(true);
             $sheet->getRowDimension($row)->setRowHeight(30);
@@ -188,7 +265,8 @@ class CashWorkbookService
         $this->text($sheet, 'B58', 'Complete cantidades, remesas y observaciones. Los valores del sistema están protegidos.');
         $sheet->getPageSetup()->setPrintArea('B2:M58');
         $sheet->getProtection()->setSheet(true);
-        foreach (['D5:I5', 'D8:I8', 'D21:J25', 'C29:K31', 'D35:J37', 'I41:J43', 'C50:K54'] as $range) {
+        $sheet->getProtection()->setInsertRows(false);
+        foreach (['D5:I5', 'D8:I8', 'D21:J25', 'C29:K31', 'K32', 'C35:K37', 'K38', 'I41:J43', 'C50:K54'] as $range) {
             $sheet->getStyle($range)->getProtection()->setLocked(Protection::PROTECTION_UNPROTECTED);
         }
         $summary = $book->createSheet()->setTitle('Resumen');
@@ -281,6 +359,7 @@ class CashWorkbookService
         $this->text($control, 'A1', (string) $record->id);
         $this->text($control, 'A2', (string) $snapshot['sessionId']);
         $this->text($control, 'A3', hash('sha256', json_encode($snapshot, JSON_THROW_ON_ERROR)));
+        $this->text($control, 'A4', self::TEMPLATE_REVISION);
         $control->setSheetState(Worksheet::SHEETSTATE_VERYHIDDEN);
         $book->setActiveSheetIndex(0);
 
@@ -363,19 +442,38 @@ class CashWorkbookService
         if ($actual->getSheetNames() !== $expected->getSheetNames()) {
             throw ValidationException::withMessages(['archivo' => 'Conserva las hojas originales del archivo descargado.']);
         }
+        if ((string) $expected->getSheetByName('_Control')->getCell('A4')->getValue() !== (string) $actual->getSheetByName('_Control')->getCell('A4')->getValue()) {
+            throw ValidationException::withMessages(['archivo' => 'La plantilla cambió. Descarga el original actualizado y completa sus campos manuales antes de entregarlo.']);
+        }
+        $layout = ['own' => 0, 'third' => 0];
+        $revision = (int) $expected->getSheetByName('_Control')->getCell('A4')->getValue();
+        if ($revision >= 3) {
+            $layout = $this->checkLayout($actual->getSheetByName('Arqueo'));
+            $this->expandCheckRows($expected->getSheetByName('Arqueo'), $this->checkLayout($expected->getSheetByName('Arqueo')), $layout);
+        }
+        $pendingSums = [];
         foreach ($expected->getWorksheetIterator() as $sheet) {
             $other = $actual->getSheetByName($sheet->getTitle());
             $coordinates = array_unique([...$sheet->getCellCollection()->getCoordinates(), ...$other->getCellCollection()->getCoordinates()]);
             foreach ($coordinates as $coordinate) {
                 $value = $other->getCell($coordinate)->getValue();
                 $original = $sheet->getCell($coordinate)->getValue();
-                $manual = $sheet->getTitle() === 'Arqueo' ? $this->manualType($coordinate) : null;
+                $manual = $sheet->getTitle() === 'Arqueo' ? $this->manualType($coordinate, $layout) : null;
+                if ($manual === 'sum' && $revision < 3) {
+                    $manual = null;
+                }
                 if ($manual !== null) {
                     if ($value === null || $value === '') {
                         continue;
                     }
                     if ($other->getCell($coordinate)->getDataType() === DataType::TYPE_FORMULA) {
-                        throw ValidationException::withMessages(['archivo' => 'Introduce valores, no fórmulas, en las celdas editables.']);
+                        if ($manual !== 'sum' || ! $this->validCheckSum($coordinate, (string) $value, $layout)) {
+                            throw ValidationException::withMessages(['archivo' => 'Usa valores en las celdas editables. En los totales de cheques puedes usar SUMA únicamente sobre los importes de su propio bloque.']);
+                        }
+                        // Validate every input before evaluating any uploaded formula.
+                        $pendingSums[] = [$other, $coordinate];
+
+                        continue;
                     }
                     if ($manual !== 'text' && (! is_numeric($value) || (float) $value < 0 || (float) $value > 99999999.99 || ($manual === 'integer' && floor((float) $value) !== (float) $value))) {
                         throw ValidationException::withMessages(['archivo' => 'Revisa el valor contado en '.$coordinate.'.']);
@@ -391,24 +489,101 @@ class CashWorkbookService
                 }
             }
         }
+        foreach ($pendingSums as [$sheet, $coordinate]) {
+            $value = $sheet->getCell($coordinate)->getCalculatedValue();
+            if (! is_numeric($value) || (float) $value < 0 || (float) $value > 99999999.99) {
+                throw ValidationException::withMessages(['archivo' => 'Revisa la suma de cheques en '.$coordinate.'.']);
+            }
+        }
     }
 
-    private function manualType(string $cell): ?string
+    /** @return array{own: int, third: int} */
+    private function checkLayout(Worksheet $sheet): array
+    {
+        $headers = ['CHEQUES AJENOS' => [], 'CUENTAS POR COBRAR' => []];
+        foreach ($sheet->getCellCollection()->getCoordinates() as $coordinate) {
+            if (preg_match('/^B([0-9]+)$/', $coordinate, $match)) {
+                $value = (string) $sheet->getCell($coordinate)->getValue();
+                // The template also names third-party checks in its earlier breakdown.
+                if (isset($headers[$value]) && (int) $match[1] >= ($value === 'CHEQUES AJENOS' ? 33 : 39)) {
+                    $headers[$value][] = (int) $match[1];
+                }
+            }
+        }
+        if (count($headers['CHEQUES AJENOS']) !== 1 || count($headers['CUENTAS POR COBRAR']) !== 1) {
+            throw ValidationException::withMessages(['archivo' => 'Conserva los encabezados originales e inserta filas solo antes del TOTAL de cada bloque de cheques.']);
+        }
+        $own = $headers['CHEQUES AJENOS'][0] - 33;
+        $third = $headers['CUENTAS POR COBRAR'][0] - 39 - $own;
+        if ($third < 0 || $own > self::MAX_EXTRA_CHECK_ROWS || $third > self::MAX_EXTRA_CHECK_ROWS) {
+            throw ValidationException::withMessages(['archivo' => 'Puedes añadir hasta 1000 filas por bloque de cheques, conservando las filas originales.']);
+        }
+
+        return ['own' => $own, 'third' => $third];
+    }
+
+    /** @param array{own: int, third: int} $from
+     * @param array{own: int, third: int} $to */
+    private function expandCheckRows(Worksheet $sheet, array $from, array $to): void
+    {
+        if ($to['own'] < $from['own'] || $to['third'] < $from['third']) {
+            throw ValidationException::withMessages(['archivo' => 'Conserva las filas originales del detalle de cheques.']);
+        }
+        if ($to['own'] > $from['own']) {
+            $sheet->insertNewRowBefore(32 + $from['own'], $to['own'] - $from['own']);
+        }
+        if ($to['third'] > $from['third']) {
+            $sheet->insertNewRowBefore(38 + $to['own'] + $from['third'], $to['third'] - $from['third']);
+        }
+    }
+
+    /** @param array{own: int, third: int} $layout */
+    private function validCheckSum(string $cell, string $formula, array $layout): bool
+    {
+        [, $row] = Coordinate::coordinateFromString($cell);
+        $own = (int) $row === 32 + $layout['own'];
+        $first = $own ? 29 : 35 + $layout['own'];
+        $last = $own ? 31 + $layout['own'] : 37 + $layout['own'] + $layout['third'];
+        if (! preg_match('/^=SUM\((.+)\)$/i', preg_replace('/\s+/', '', $formula), $sum)) {
+            return false;
+        }
+        foreach (explode(',', $sum[1]) as $range) {
+            if (! preg_match('/^\$?K\$?([0-9]+)(?::\$?K\$?([0-9]+))?$/i', $range, $match)) {
+                return false;
+            }
+            $start = (int) $match[1];
+            $end = (int) ($match[2] ?? $match[1]);
+            if ($start < $first || $end > $last || $start > $end) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /** @param array{own: int, third: int} $layout */
+    private function manualType(string $cell, array $layout = ['own' => 0, 'third' => 0]): ?string
     {
         [$column, $row] = Coordinate::coordinateFromString($cell);
         $row = (int) $row;
         $col = Coordinate::columnIndexFromString($column);
+        if ($column === 'K' && in_array($row, [32 + $layout['own'], 38 + $layout['own'] + $layout['third']], true)) {
+            return 'sum';
+        }
+        if (($row >= 29 && $row <= 31 + $layout['own'])
+            || ($row >= 35 + $layout['own'] && $row <= 37 + $layout['own'] + $layout['third'])) {
+            return $col >= 3 && $col <= 11 ? ($col === 11 ? 'number' : 'text') : null;
+        }
+        if ($row >= 38 + $layout['own'] + $layout['third']) {
+            $row -= $layout['own'] + $layout['third'];
+        } elseif ($row >= 32 + $layout['own']) {
+            $row -= $layout['own'];
+        }
         if (in_array($row, [5, 8], true) && $col >= 4 && $col <= 9) {
             return 'integer';
         }
         if ($row >= 21 && $row <= 25 && $col >= 4 && $col <= 10) {
             return 'number';
-        }
-        if ($row >= 29 && $row <= 31 && $col >= 3 && $col <= 11) {
-            return $col === 11 ? 'number' : 'text';
-        }
-        if ($row >= 35 && $row <= 37 && $col >= 4 && $col <= 10) {
-            return 'text';
         }
         if ($row >= 41 && $row <= 43 && $col >= 9 && $col <= 10) {
             return 'text';

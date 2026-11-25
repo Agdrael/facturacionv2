@@ -60,6 +60,7 @@ Route::middleware([
         Route::get('resumenes/{kind}', 'summary')->where('kind', 'ventas|recibos')->name('summary');
         Route::get('archivos/{kind}', 'download')->where('kind', 'original|entregado|firmado')->name('download');
         Route::post('archivo', 'upload')->name('upload');
+        Route::post('plantilla', 'refreshTemplate')->name('template');
         Route::post('revisar', 'review')->name('review');
         Route::post('firmar', 'sign')->name('sign');
     });
