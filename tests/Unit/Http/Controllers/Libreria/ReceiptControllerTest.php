@@ -1,5 +1,6 @@
 <?php
 
+use App\Models\Libreria\Receipt;
 use App\Models\Permission;
 use App\Models\Role;
 use App\Models\User;
@@ -8,6 +9,8 @@ use App\Services\Libreria\CashSummaryService;
 use App\Services\Libreria\CashWorkbookService;
 use App\Services\Libreria\ReceiptCreditService;
 use App\Services\Libreria\ReceiptMoney;
+use App\Services\Libreria\ReceiptSourceService;
+use App\Services\Libreria\ReceiptTicketService;
 use Database\Seeders\ReceiptControlSeeder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -21,6 +24,65 @@ uses(TestCase::class);
 
 beforeEach(function () {
     $this->withoutVite();
+});
+
+test('retreats and sacraments require a real student even when issued by a direct request', function (string $name) {
+    prepareReceipts($this);
+    DB::table('public.catalogo_recibos')->insert(['id' => 4, 'nombre_recibo' => $name, 'cuenta_abono' => '5101', 'precio' => 10]);
+    $concept = collect(app(ReceiptSourceService::class)->concepts())->firstWhere('id', 4);
+    expect($concept['requiresStudent'])->toBeTrue();
+    $input = receiptPayload();
+    $input['conceptId'] = 4;
+
+    $this->postJson(route('libreria.recibos.store'), $input)->assertUnprocessable()->assertJsonValidationErrors('receipts');
+    $input['studentId'] = '999999';
+    $this->postJson(route('libreria.recibos.store'), $input)->assertUnprocessable()->assertJsonValidationErrors('receipts');
+
+    $this->assertDatabaseCount('libreria.receipts', 0);
+    expect(DB::connection('receipt_legacy')->table('public.recibos')->count())->toBe(0);
+    Http::assertNothingSent();
+})->with(['RETIROS UN DIA', 'RETIRO DE PROMOCION', 'CONFIRMA', 'CUOTAS 1° COMUNION COLECTIVAS', 'Primera Comunión']);
+
+test('student references remain historical searchable metadata without changing the payer ticket or academic balances', function () {
+    $user = prepareReceipts($this);
+    DB::table('public.catalogo_recibos')->insert(['id' => 4, 'nombre_recibo' => 'RETIRO DE CONFIRMA', 'cuenta_abono' => '5101', 'precio' => 10]);
+    $platform = DB::connection('plataforma');
+    $platform->table('public.saldo_pagos')->insert(['id_saldo' => 9, 'student_id' => '501', 'syear' => 2025, 'mes' => 9,
+        'cuota' => 100, 'pago' => 10, 'saldo' => 90, 'cuota_beca' => 20, 'pago_beca' => 5, 'saldo_beca' => 15,
+        'cuota_bienhechor' => 30, 'pago_bienhechor' => 10, 'saldo_bienhechor' => 20]);
+    $balances = $platform->table('public.saldo_pagos')->get()->all();
+    $input = receiptPayload();
+    $input['conceptId'] = 4;
+    $input['studentId'] = '501';
+
+    $response = $this->postJson(route('libreria.recibos.store'), $input)->assertCreated()->assertJsonPath('status', 'EMITIDO');
+    $receipt = Receipt::query()->findOrFail($response->json('id'));
+    expect($receipt->recipient_type)->toBe('manual');
+    expect($receipt->recipient_name)->toBe('Destinatario de prueba');
+    $line = DB::table('libreria.receipt_lines')->where('receipt_id', $receipt->id)->sole();
+    expect($line->kind)->toBe('normal')->and($line->obligation_id)->toBeNull();
+    expect(json_decode($line->data, true))->toMatchArray(['account' => '5101', 'history_student' => ['id' => '501', 'name' => 'Alumno Uno']]);
+    expect($platform->table('public.saldo_pagos')->get()->all())->toEqual($balances);
+    expect($platform->table('public.cxc')->count())->toBe(0);
+    expect($platform->table('public.detalle_pagos')->count())->toBe(0);
+    $this->assertDatabaseCount('libreria.receipt_obligations', 0);
+    expect(DB::table('libreria.receipt_integrations')->where('target', 'platform')->count())->toBe(0);
+    $this->assertDatabaseHas('public.recibos', ['numero_carnet' => '501', 'nombre_cliente' => 'Destinatario de prueba',
+        'cuenta_abono' => '5101', 'precio' => 10], 'receipt_legacy');
+    $platform->table('public.students')->where('student_id', 501)->update(['first_name' => 'Nombre cambiado']);
+    foreach (['501', 'ALUMNO UNO', 'Destinatario'] as $search) {
+        $this->getJson(route('libreria.recibos.history', ['q' => $search]))->assertOk()
+            ->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', $receipt->id)
+            ->assertJsonPath('data.0.student', ['id' => '501', 'name' => 'Alumno Uno']);
+    }
+    $document = app(ReceiptTicketService::class)->document($receipt);
+    $html = view('libreria.recibos.ticket', ['receipt' => $document, 'emitter' => (object) $document['issuer']])->render();
+    expect($html)->toContain('Destinatario de prueba')->not->toContain('Alumno Uno');
+    $other = User::factory()->create();
+    DB::table('libreria.receipts')->where('id', $receipt->id)->update(['user_id' => $other->id]);
+    $user->roles()->sync(Role::query()->where('code', 'libreria')->pluck('id'));
+    $this->getJson(route('libreria.recibos.history', ['q' => '501']))->assertOk()->assertJsonCount(0, 'data');
+    Http::assertNothingSent();
 });
 
 test('one operation issues one private receipt with mixed payments and retries without duplicate collections', function () {

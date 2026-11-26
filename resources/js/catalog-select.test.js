@@ -19,7 +19,8 @@ function select(choices = options, value = '', disabled = false) {
     state.$dispatch = (name, detail) => state.events.push({ name, detail });
     state.$nextTick = callback => callback();
     state.$refs = {
-        trigger: { id: 'test-select', focus: () => { state.focused = 'trigger'; }, getBoundingClientRect: () => ({ left: 30, top: 100, bottom: 144, width: 400 }) },
+        trigger: { id: 'test-select', focus: () => { state.focused = 'trigger'; }, getBoundingClientRect: () => ({ left: 30, top: 100, bottom: 144, width: 400 }),
+            dispatchEvent: event => { state.events.push({ name: event.type, detail: event.detail }); } },
         search: { focus: () => { state.focused = 'search'; } },
         list: { querySelector: () => null },
     };
@@ -56,7 +57,7 @@ test('selection preserves raw codes including zero and dispatches the change aft
     assert.equal(state.selectedLabel, 'No');
     assert.equal(state.open, false);
     assert.equal(state.focused, 'trigger');
-    assert.deepEqual(state.events, [{ name: 'change', detail: undefined }]);
+    assert.deepEqual(state.events, [{ name: 'change', detail: { value: '0' } }]);
 });
 
 test('disabled and unknown options cannot modify the selected value', () => {
@@ -70,6 +71,24 @@ test('disabled and unknown options cannot modify the selected value', () => {
     state.choose('999');
     assert.equal(state.value, '01');
     assert.deepEqual(state.events, []);
+});
+
+test('selection notifies the form from its trigger instead of the teleported options panel', () => {
+    const state = select();
+    const trigger = new EventTarget();
+    const changes = [];
+    state.$dispatch = () => assert.fail('Selection changes must originate inside the form');
+    state.$refs.trigger.dispatchEvent = event => trigger.dispatchEvent(event);
+    trigger.addEventListener('change', event => {
+        changes.push({ target: event.target, value: event.detail.value, bubbles: event.bubbles });
+    });
+
+    state.choose('02');
+
+    assert.equal(changes.length, 1);
+    assert.equal(changes[0].target, trigger);
+    assert.equal(changes[0].value, '02');
+    assert.equal(changes[0].bubbles, true);
 });
 
 test('keyboard navigation opens the menu focuses search and selects the active option', () => {
@@ -111,4 +130,35 @@ test('dependent options update without losing their code or exposing choices fro
     state.setOptions([{ value: '8', label: 'Otro distrito' }]);
     state.choose('8');
     assert.equal(state.value, '8');
+});
+
+test('selects inside dialogs keep their search panel in the top layer and remove it on close', () => {
+    const state = select();
+    const dialog = { appendChild(panel) { panel.parentElement = this; } };
+    let showing = false;
+    state.$refs.trigger.closest = () => dialog;
+    state.$refs.panel = { parentElement: null, showPopover() { showing = true; }, hidePopover() { showing = false; }, matches: () => showing };
+
+    state.openMenu();
+
+    assert.equal(state.$refs.panel.parentElement, dialog);
+    assert.equal(showing, true);
+    state.choose('02');
+    assert.equal(state.value, '02');
+    assert.equal(showing, false);
+    state.openMenu();
+    state.destroy();
+    assert.equal(showing, false);
+    assert.equal(state.open, false);
+});
+
+test('a pending open does not show a stale panel after closing', () => {
+    const state = select();
+    let onOpen;
+    state.$nextTick = callback => { onOpen = callback; };
+    state.openMenu();
+    state.closeMenu();
+    onOpen();
+    assert.equal(state.open, false);
+    assert.equal(state.focused, '');
 });

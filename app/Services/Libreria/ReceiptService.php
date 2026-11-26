@@ -52,16 +52,18 @@ class ReceiptService
             $change = $paid - $total;
             $this->sources->require($change >= 0 && $change <= $cash, 'Completa el pago. El excedente solo puede devolverse del efectivo recibido.');
             if ($input['mode'] === 'catalog') {
-                if (isset($input['studentId'])) {
+                $concept = DB::table('public.catalogo_recibos')->where('id', $input['conceptId'])->first();
+                $this->sources->require($concept !== null, 'El concepto no existe en el catálogo.');
+                if (isset($input['studentId']) && ! $this->sources->requiresStudentForHistory($concept->nombre_recibo)) {
                     $recipient = $this->sources->recipient(['type' => 'alumno', 'id' => $input['studentId']]);
                 } elseif (isset($input['recipient']['clientId'])) {
                     $recipient = $this->sources->recipient(['type' => 'cliente', 'id' => (string) $input['recipient']['clientId']]);
                 } else {
                     $recipient = $this->sources->recipient(['type' => 'manual', 'id' => $input['requestKey'], 'name' => $input['recipient']['name']]);
                 }
-                $line = ['conceptId' => $input['conceptId'], 'amount' => $input['amount'], 'year' => $input['year'] ?? null,
+                $line = ['conceptId' => $input['conceptId'], 'studentId' => $input['studentId'] ?? null, 'amount' => $input['amount'], 'year' => $input['year'] ?? null,
                     'funding' => $input['funding'] ?? 'normal', 'account' => $input['account'] ?? null];
-                $details = [$this->line($recipient, $line, $total)];
+                $details = [$this->line($recipient, $line, $total, $concept)];
             } elseif ($input['mode'] === 'academic_cxc' && ! empty($input['academicItems'])) {
                 $this->sources->require(! isset($input['sourceId']) && ! isset($input['invoice']), 'Usa únicamente la selección de CXC del recibo.');
                 $details = [];
@@ -129,7 +131,7 @@ class ReceiptService
      * @param  array<string, mixed>  $line
      * @return array<string, mixed>
      */
-    private function line(array $recipient, array $line, int $amount): array
+    private function line(array $recipient, array $line, int $amount, ?stdClass $catalogConcept = null): array
     {
         if (! empty($line['obligationKey'])) {
             $obligation = $this->sources->obligation($line['obligationKey'], $recipient);
@@ -142,12 +144,17 @@ class ReceiptService
 
             return ['kind' => $obligation->kind, 'obligation_id' => $obligation->id, 'description' => $data['description'], 'amount' => ReceiptMoney::decimal($amount), 'data' => $data];
         }
-        $concept = DB::table('public.catalogo_recibos')->where('id', $line['conceptId'])->first();
+        $concept = $catalogConcept ?? DB::table('public.catalogo_recibos')->where('id', $line['conceptId'])->first();
         $this->sources->require($concept !== null, 'El concepto no existe en el catálogo.');
         $kind = $this->sources->conceptKind($concept->nombre_recibo, $concept->cuenta_abono);
         $this->sources->require($kind !== 'deuda' && trim((string) $concept->cuenta_abono) !== '00', 'Para abonar a CXC, selecciona una deuda y su factura; no un concepto de importe libre.');
         $this->sources->require(empty($line['account']) || $line['account'] === $concept->cuenta_abono, 'El tipo de recibo tiene una cuenta fija que no se puede sustituir.');
         $data = ['account' => $concept->cuenta_abono, 'legacy_code' => $concept->nombre_recibo];
+        if ($this->sources->requiresStudentForHistory($concept->nombre_recibo)) {
+            $this->sources->require(! empty($line['studentId']), 'Este tipo de recibo requiere seleccionar un alumno para su historial.');
+            $student = $this->sources->recipient(['type' => 'alumno', 'id' => (string) $line['studentId']]);
+            $data['history_student'] = ['id' => $student['id'], 'name' => $student['name']];
+        }
         $obligationId = null;
         if ($kind === 'anticipo') {
             $data['legacy_code'] = 'PAGO EN ANTICIPO · '.$concept->nombre_recibo;
@@ -229,10 +236,11 @@ class ReceiptService
         return $receipt;
     }
 
-    /** @return array<string, mixed> */
-    public function present(Receipt $receipt): array
+    /** @param array{id: string, name: string}|null $student
+     * @return array<string, mixed> */
+    public function present(Receipt $receipt, ?array $student = null): array
     {
-        return ['id' => $receipt->id, 'number' => $receipt->number(), 'recipient' => $receipt->recipient_name, 'payer' => $receipt->payer_name,
+        return ['id' => $receipt->id, 'number' => $receipt->number(), 'recipient' => $receipt->recipient_name, 'payer' => $receipt->payer_name, 'student' => $student,
             'operator' => $receipt->operator_name, 'register' => $receipt->register, 'total' => $receipt->total, 'status' => $receipt->status,
             'date' => $receipt->created_at->setTimezone('America/El_Salvador')->format('d/m/Y H:i'),
             'annulmentReason' => $receipt->annulment_reason, 'ticketUrl' => route('libreria.recibos.ticket', $receipt->id),

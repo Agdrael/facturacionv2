@@ -7,9 +7,12 @@ export function createReceiptWorkspace(options = {}) {
         selection: null, selecting: false, selectionSequence: 0, invoices: [], invoiceQuery: '', invoiceChoice: '', academicItems: [],
         lookupKind: 'clients', lookupQuery: '', lookupYear: '', lookupFunding: 'normal', lookupRows: [], lookupPage: 1, lookupPages: 1, lookupLoading: false, lookupSequence: 0,
         history: [], historyLoading: false, historyQuery: '', historyLegacy: false, historyPage: 1, historyPages: 1, historySequence: 0,
+        get historyOrigin() { return this.historyLegacy ? 'legacy' : 'current'; },
+        set historyOrigin(value) { this.historyLegacy = value === 'legacy'; },
         annulment: { row: null, reason: '' },
         get locked() { return this.busy || this.submittedPayload !== null || this.completed !== null; },
         get concept() { return options.concepts.find(row => String(row.id) === String(this.form.conceptId)) || null; },
+        get requiresStudent() { return this.mode === 'catalog' && (this.concept?.requiresStudent || this.concept?.kind === 'fotografia'); },
         get total() { return this.cents(this.form.amount) + this.academicItems.reduce((sum, row) => sum + this.cents(row.amount), 0); },
         get paid() { return this.form.payments.reduce((sum, row) => sum + this.cents(row.amount), 0); },
         get cash() { return this.form.payments.filter(row => row.method === '01').reduce((sum, row) => sum + this.cents(row.amount), 0); },
@@ -149,7 +152,7 @@ export function createReceiptWorkspace(options = {}) {
             return { requestKey: this.requestKey, mode: this.mode, recipient: { name: this.form.recipient.name || null,
                 clientId: this.form.recipient.clientId || null, documentType: this.form.recipient.documentType || null, document: this.form.recipient.document || null },
                 ...(this.mode === 'catalog' ? { conceptId: Number(this.form.conceptId),
-                    ...(this.form.studentId ? { studentId: this.form.studentId, year: Number(this.form.year) } : {}) }
+                    ...(this.form.studentId ? { studentId: this.form.studentId, ...(this.concept?.kind === 'fotografia' ? { year: Number(this.form.year) } : {}) } : {}) }
                     : (this.mode === 'academic_cxc' ? (this.academicItems.length ? { academicItems: [...this.academicItems.map(({ name, invoiceNumber, remaining, ...item }) => ({ ...item })), ...(this.form.sourceId ? [this.academicDraft()] : [])] } : { sourceId: this.form.sourceId }) : { sourceKey: this.form.sourceKey })),
                 funding: this.form.funding, account: this.form.account || null, amount: (this.total / 100).toFixed(2), observation: this.form.observation || null,
                 ...(this.mode === 'academic_cxc' && !this.academicItems.length && this.form.invoice && !this.form.invoiceAutomatic ? { invoice: { origin: this.form.invoice.origin, uuid: this.form.invoice.uuid, confirmed: this.form.invoiceConfirmed } } : {}),
@@ -160,7 +163,7 @@ export function createReceiptWorkspace(options = {}) {
             if (!this.submittedPayload) {
                 if (this.mode === 'catalog' && (!this.concept || !this.form.recipient.name.trim())) { this.notice = 'Indica el nombre y selecciona el tipo de recibo.'; return; }
                 if (this.concept?.kind === 'anticipo' && !this.form.recipient.clientId) { this.notice = 'Selecciona el cliente del catálogo actual para registrar su anticipo.'; return; }
-                if (this.concept?.kind === 'fotografia' && !this.form.studentId) { this.notice = 'Selecciona el alumno y el año académico para fotografías.'; return; }
+                if (this.requiresStudent && !this.form.studentId) { this.notice = this.concept?.kind === 'fotografia' ? 'Selecciona el alumno y el año académico para fotografías.' : 'Selecciona un alumno para guardar este recibo en su historial.'; return; }
                 if (this.mode === 'client_cxc' && (!this.selection || !this.form.invoice || !this.form.account)) { this.notice = 'Selecciona la factura y su cuenta por cobrar antes de emitir.'; return; }
                 if (this.mode === 'academic_cxc' && ((!this.form.sourceId && !this.academicItems.length) || (this.form.sourceId && !this.academicReady()))) return;
                 if (this.academicItems.some(row => this.cents(row.amount) <= 0 || this.cents(row.amount) > this.cents(row.remaining))) { this.notice = 'Revisa los abonos: deben ser mayores que cero y no superar el saldo de cada cuota.'; return; }

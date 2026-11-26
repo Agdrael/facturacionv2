@@ -197,11 +197,28 @@ class ReceiptController extends Controller
             $query->where('user_id', $request->user()->id);
         }
         if (trim($data['q'] ?? '') !== '') {
-            $query->whereRaw('LOWER(recipient_name) LIKE ?', ['%'.mb_strtolower(trim($data['q'])).'%']);
+            $search = '%'.trim($data['q']).'%';
+            $query->where(function ($query) use ($search, $data): void {
+                $query->whereLike('recipient_name', $search)->orWhereLike('payer_name', $search)
+                    ->orWhereExists(function ($line) use ($search, $data): void {
+                        $line->selectRaw('1')->from('libreria.receipt_lines as l')->whereColumn('l.receipt_id', 'libreria.receipts.id')
+                            ->where(function ($student) use ($search, $data): void {
+                                $student->where('l.data->history_student->id', trim($data['q']))
+                                    ->orWhereLike('l.data->history_student->name', $search);
+                            });
+                    });
+            });
         }
         $page = $query->paginate(30);
+        $students = [];
+        foreach (DB::table('libreria.receipt_lines')->whereIn('receipt_id', $page->getCollection()->modelKeys())->get(['receipt_id', 'data']) as $line) {
+            $lineData = json_decode($line->data, true, 512, JSON_THROW_ON_ERROR);
+            if (isset($lineData['history_student'])) {
+                $students[$line->receipt_id] = $lineData['history_student'];
+            }
+        }
 
-        return response()->json(['data' => $page->getCollection()->map(fn ($r) => $receipts->present($r))->all(), 'page' => $page->currentPage(), 'pages' => $page->lastPage()]);
+        return response()->json(['data' => $page->getCollection()->map(fn ($r) => $receipts->present($r, $students[$r->id] ?? null))->all(), 'page' => $page->currentPage(), 'pages' => $page->lastPage()]);
     }
 
     public function retry(Request $request, int $receipt, ReceiptService $receipts, ReceiptIntegrationService $integrations): JsonResponse

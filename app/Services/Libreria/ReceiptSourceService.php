@@ -21,13 +21,21 @@ class ReceiptSourceService
         return DB::connection(config('receipts.platform_connection'));
     }
 
-    /** @return list<array{id: int, name: string, price: string, account: ?string, kind: string, requiresAccount: bool}> */
+    /** @return list<array{id: int, name: string, price: string, account: ?string, kind: string, requiresAccount: bool, requiresStudent: bool}> */
     public function concepts(): array
     {
         return array_values(DB::table('public.catalogo_recibos as c')
             ->orderBy('c.nombre_recibo')->get(['c.id', 'c.nombre_recibo', 'c.precio', 'c.cuenta_abono'])
             ->map(fn ($c) => ['id' => $c->id, 'name' => $c->nombre_recibo, 'price' => (string) $c->precio, 'account' => $c->cuenta_abono,
-                'kind' => $this->conceptKind($c->nombre_recibo, $c->cuenta_abono), 'requiresAccount' => trim((string) $c->cuenta_abono) === '00'])->all());
+                'kind' => $this->conceptKind($c->nombre_recibo, $c->cuenta_abono), 'requiresAccount' => trim((string) $c->cuenta_abono) === '00',
+                'requiresStudent' => $this->conceptKind($c->nombre_recibo, $c->cuenta_abono) === 'fotografia' || $this->requiresStudentForHistory($c->nombre_recibo)])->all());
+    }
+
+    public function requiresStudentForHistory(string $name): bool
+    {
+        $name = Str::upper(Str::ascii(trim($name)));
+
+        return (bool) preg_match('/\b(?:RETIROS?|CONFIRMA(?:S|CION(?:ES)?)?|COMUNION(?:ES)?|SACRAMENTOS?)\b/', $name);
     }
 
     public function conceptKind(string $name, ?string $account): string

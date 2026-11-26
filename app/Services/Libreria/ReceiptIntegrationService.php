@@ -255,7 +255,7 @@ class ReceiptIntegrationService
                 'uuid_asignado' => $data['invoice']['uuid'] ?? '----', 'nombre_cliente' => mb_substr($receipt->recipient_name, 0, 60),
                 'fecha' => $date, 'fecha_sistema' => $date, 'cuenta_cargo' => $data['cash_account'],
                 'codigo_recibo' => mb_substr($data['legacy_code'] ?? $line->description, 0, 250), 'cuenta_abono' => $data['account'],
-                'numero_carnet' => $data['student_id'] ?? null, 'numero_caja' => $receipt->register,
+                'numero_carnet' => $data['student_id'] ?? $data['history_student']['id'] ?? null, 'numero_caja' => $receipt->register,
                 'observacion' => mb_substr($receipt->number().' · '.$line->description.' · Medio '.$payment->method.' '.$payment->reference.' · '.$receipt->observation, 0, 500),
                 'precio' => ReceiptMoney::decimal($parts[$payment->id]), 'tarjeta' => in_array($payment->method, ['02', '03'], true),
                 'cxc' => in_array($line->kind, ['academic', 'legacy', 'sale'], true), 'cxc_id' => $cargo?->id, 'id_detalle_pago' => null,

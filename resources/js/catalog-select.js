@@ -50,6 +50,11 @@ export function createCatalogSelect(options = [], value = '', disabled = false) 
             this.active = last ? this.visibleOptions.length - 1 : Math.max(0, this.visibleOptions.findIndex(option => String(option.value) === this.value));
             this.open = true;
             this.$nextTick(() => {
+                if (!this.open) return;
+                const panel = this.$refs.panel;
+                const dialog = this.$refs.trigger.closest?.('dialog');
+                if (panel && dialog && panel.parentElement !== dialog) dialog.appendChild(panel);
+                panel?.showPopover?.();
                 this.$refs.search.focus();
                 this.scrollActive();
             });
@@ -57,7 +62,13 @@ export function createCatalogSelect(options = [], value = '', disabled = false) 
 
         closeMenu(focus = false) {
             this.open = false;
+            const panel = this.$refs.panel;
+            if (panel?.hidePopover && panel.matches(':popover-open')) panel.hidePopover();
             if (focus) this.$refs.trigger.focus();
+        },
+
+        destroy() {
+            this.closeMenu();
         },
 
         move(step) {
@@ -74,7 +85,9 @@ export function createCatalogSelect(options = [], value = '', disabled = false) 
             if (this.disabled || !this.options.some(option => String(option.value) === String(value))) return;
             this.value = String(value);
             this.closeMenu(true);
-            this.$nextTick(() => this.$dispatch('change'));
+            this.$nextTick(() => this.$refs.trigger.dispatchEvent(new CustomEvent('change', {
+                bubbles: true, detail: { value: this.value },
+            })));
         },
 
         chooseActive() {

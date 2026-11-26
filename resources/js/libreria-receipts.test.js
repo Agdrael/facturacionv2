@@ -38,6 +38,37 @@ test('one operation retains one concept and several payment methods with cash-on
     assert.equal(state.form.payments.length, 1);
 });
 
+test('retreats and sacraments require a student solely for history while retaining payer account and amount', async () => {
+    const state = workspace();
+    state.options.concepts[0].name = 'RETIRO DE CONFIRMA';
+    state.options.concepts[0].requiresStudent = true;
+    normal(state);
+    let calls = 0;
+    state.api = async () => { calls++; return { id: 8 }; };
+    await state.issue();
+    assert.equal(calls, 0);
+    assert.match(state.notice, /alumno/);
+    state.lookupKind = 'students';
+    await state.choose({ id: 501, name: 'Alumno Uno' });
+    const input = state.payload();
+    assert.equal(input.studentId, '501');
+    assert.equal(input.recipient.name, 'Persona sin registro');
+    assert.equal(input.account, '5101');
+    assert.equal(input.amount, '10.00');
+    assert.equal('year' in input, false);
+    await state.issue();
+    assert.equal(calls, 1);
+});
+
+test('photography still requires its student and sends the academic year', () => {
+    const state = workspace();
+    state.options.concepts[0].kind = 'fotografia';
+    normal(state);
+    assert.equal(state.requiresStudent, true);
+    state.form.studentId = '501'; state.form.year = 2025;
+    assert.equal(state.payload().year, 2025);
+});
+
 test('an unconfirmed receipt retries the exact request and never opens its PDF automatically', async t => {
     const state = workspace();
     normal(state);
@@ -198,4 +229,21 @@ test('completing a receipt payment fills only its missing share without replacin
     state.form.amount = '12.00';
     state.completePayment(2);
     assert.equal(state.form.payments[1].amount, '4.00');
+});
+
+test('the searchable history origin sends the correct legacy flag after switching back to current receipts', async () => {
+    const state = workspace();
+    state.options.historyUrl = '/history';
+    const flags = [];
+    state.api = async url => {
+        flags.push(url.searchParams.get('legacy'));
+        return { data: [], page: 1, pages: 1 };
+    };
+    assert.equal(state.historyOrigin, 'current');
+    state.historyOrigin = 'legacy';
+    await state.loadHistory();
+    state.historyOrigin = 'current';
+    await state.loadHistory();
+    assert.equal(state.historyLegacy, false);
+    assert.deepEqual(flags, ['1', '0']);
 });
