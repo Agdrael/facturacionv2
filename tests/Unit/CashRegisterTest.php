@@ -263,10 +263,12 @@ test('cash workbook subtracts partial remittances and accepts counted third part
     $file = cashEditedWorkbook($record, $changes);
     $book = IOFactory::load($file->getPathname());
     $sheet = $book->getSheetByName('Arqueo');
+    expect($sheet->getCell('K10')->getCalculatedValue())->toEqual(464.25);
     expect($sheet->getCell('K11')->getCalculatedValue())->toEqual(125);
     expect($sheet->getCell('K12')->getCalculatedValue())->toEqual(250);
     expect($sheet->getCell('K13')->getCalculatedValue())->toEqual(839.25);
     expect($sheet->getCell('K38')->getCalculatedValue())->toEqual(300);
+    expect($sheet->getCell('F48')->getCalculatedValue())->toEqual(950);
     expect($sheet->getCell('J48')->getValue())->toEqual(0);
     expect($sheet->getStyle('K35')->getProtection()->getLocked())->toBe(Protection::PROTECTION_UNPROTECTED);
     $book->disconnectWorksheets();
@@ -390,7 +392,7 @@ test('updating an unsigned workbook preserves previous versions and entered data
     expect($sheet->getCell('K35')->getValue())->toEqual(9.50);
     expect($sheet->getCell('C35')->getValue())->toBe('CHEQUE-MANUAL');
     expect($sheet->getCell('C50')->getValue())->toBe('Datos ya entregados');
-    expect($sheet->getCell('K13')->getValue())->toBe('=SUM(K10:K12)-SUM(K21,K22,K25)');
+    expect($sheet->getCell('K13')->getValue())->toBe('=SUM(K10:K12)');
     expect($sheet->getStyle('K35')->getProtection()->getLocked())->toBe(Protection::PROTECTION_UNPROTECTED);
     $book->disconnectWorksheets();
     $this->post(route('libreria.arqueos.upload', $record->id), ['archivo' => $oldUpload])->assertSessionHasErrors('archivo');
@@ -428,13 +430,15 @@ test('review and signature apply to the delivered version and signed workbooks c
     $this->get(route('libreria.arqueos.download', [$record->id, 'firmado']))->assertOk();
 });
 
-test('refreshing the workbook subtracts Otros and retains manually added check rows and sums', function () {
+test('refreshing revision four corrects cash and counted total while retaining manually added check rows and sums', function () {
     prepareCashControl($this);
     $record = cashClosedRecord($this);
     $oldPath = app(CashWorkbookService::class)->original($record, auth()->user());
     $book = IOFactory::load(Storage::disk('cash')->path($oldPath));
-    $book->getSheetByName('_Control')->setCellValue('A4', '3');
+    $book->getSheetByName('_Control')->setCellValue('A4', '4');
+    $book->getSheetByName('Arqueo')->setCellValue('K10', '=SUM(K6,K9)');
     $book->getSheetByName('Arqueo')->setCellValue('K13', '=SUM(K10:K12)-SUM(K21:K22)');
+    $book->getSheetByName('Arqueo')->setCellValue('F48', '=SUM(K13,K26)');
     $writer = new Xlsx($book);
     $writer->setPreCalculateFormulas(false);
     $writer->save(Storage::disk('cash')->path($oldPath));
@@ -443,6 +447,8 @@ test('refreshing the workbook subtracts Otros and retains manually added check r
         $sheet = $book->getSheetByName('Arqueo');
         $sheet->insertNewRowBefore(38, 2);
         $sheet->setCellValue('D5', 100);
+        $sheet->setCellValue('D21', 2);
+        $sheet->setCellValue('D22', 3);
         $sheet->setCellValue('D25', 7.50);
         $sheet->setCellValue('K35', 5);
         $sheet->setCellValue('K39', 10);
@@ -456,7 +462,12 @@ test('refreshing the workbook subtracts Otros and retains manually added check r
     expect($sheet->getCell('K25')->getCalculatedValue())->toEqual(7.50);
     expect($sheet->getCell('K39')->getValue())->toEqual(10);
     expect($sheet->getCell('K40')->getValue())->toBe('=SUM(K35:K39)');
-    expect($sheet->getCell('K13')->getCalculatedValue())->toEqual(107.50);
+    expect($sheet->getCell('K10')->getCalculatedValue())->toEqual(87.50);
+    expect($sheet->getCell('K13')->getValue())->toBe('=SUM(K10:K12)');
+    expect($sheet->getCell('K13')->getCalculatedValue())->toEqual(102.50);
+    expect($sheet->getCell('F50')->getCalculatedValue())->toEqual(115);
+    expect($sheet->getCell('F47')->getValue())->toBe('EFECTIVO + CHEQUES');
+    expect($book->getSheetByName('_Control')->getCell('A4')->getValue())->toBe('5');
     expect($record->estado)->toBe('pendiente_excel');
     $book->disconnectWorksheets();
 });

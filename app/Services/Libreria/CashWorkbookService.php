@@ -25,7 +25,7 @@ use ZipArchive;
 
 class CashWorkbookService
 {
-    private const TEMPLATE_REVISION = '4';
+    private const TEMPLATE_REVISION = '5';
 
     private const MAX_EXTRA_CHECK_ROWS = 1000;
 
@@ -256,7 +256,7 @@ class CashWorkbookService
         $sheet->setCellValue('H48', '=F48-D48');
         $sheet->setCellValue('J48', (float) ($methods['04'] ?? 0));
         $this->text($sheet, 'D45', 'EFECTIVO ESPERADO');
-        $this->text($sheet, 'F45', 'EFECTIVO + REMESAS');
+        $this->text($sheet, 'F45', 'EFECTIVO + CHEQUES');
         $this->text($sheet, 'H45', 'SOBRANTE / FALTANTE');
         $this->text($sheet, 'J45', 'CHEQUES ESPERADOS');
         $this->text($sheet, 'C50', '');
