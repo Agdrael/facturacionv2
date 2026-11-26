@@ -43,7 +43,7 @@ Route::middleware([
     EnsureUserHasRoles::class,
     ResolvePuntoVentaById::class,
 ])->group(function () {
-    Route::view('dashboard', 'dashboard')->name('dashboard');
+    Route::livewire('dashboard', 'pages::dashboard')->name('dashboard');
     Route::get('libreria/cajas/integracion-v1/{register}', [LegacyCashBridgeController::class, 'show'])
         ->where('register', 'P00[123]')->middleware('can:libreria.arqueos.revisar')->name('libreria.cajas.legacy.show');
     Route::post('libreria/cajas/integracion-v1/{register}', [LegacyCashBridgeController::class, 'confirm'])

@@ -16,12 +16,15 @@ class ResolvePuntoVentaById
     public function handle(Request $request, Closure $next): Response
     {
         $user = $request->user();
-        $ip = $request->ip();
-
-        $puntoVenta = config('puntoventa')[$ip] ?? 'P004';
+        $puntoVenta = $this->resolve($request);
 
         $user->setAttribute('puntoventa', $puntoVenta);
 
         return $next($request);
+    }
+
+    public function resolve(Request $request): string
+    {
+        return config('puntoventa')[$request->ip()] ?? 'P004';
     }
 }

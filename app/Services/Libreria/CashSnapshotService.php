@@ -7,10 +7,11 @@ use App\Models\Libreria\Receipt;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
 use Illuminate\Support\Facades\DB;
-use RuntimeException;
 
 class CashSnapshotService
 {
+    public function __construct(private CashMovementCalculator $calculator) {}
+
     /** @return array<string, mixed> */
     public function build(CashSession $session): array
     {
@@ -26,26 +27,14 @@ class CashSnapshotService
         foreach ($rows as $row) {
             $payments = json_decode($row->pagos, true, 512, JSON_THROW_ON_ERROR);
             $client = json_decode($row->cliente, true, 512, JSON_THROW_ON_ERROR);
-            $received = [];
-            foreach ($payments['received'] as $payment) {
-                $method = (string) $payment['method'];
-                $received[$method] = BigDecimal::of($received[$method] ?? '0')->plus((string) $payment['amount']);
-            }
-            $change = BigDecimal::of((string) ($payments['change'] ?? '0'));
-            if ($change->isPositive()) {
-                $received['01'] = BigDecimal::of($received['01'] ?? '0')->minus($change);
-                if ($received['01']->isNegative()) {
-                    throw new RuntimeException('El cambio excede el efectivo registrado en '.$row->numero_control);
-                }
-            }
-            $paid = BigDecimal::zero();
+            $calculation = $this->calculator->native($payments['received'], (string) ($payments['change'] ?? '0'), (string) $row->total, (string) $row->operacion);
+            $received = $calculation['payments'];
+            $change = $calculation['change'];
             foreach ($received as $method => $amount) {
-                $paid = $paid->plus($amount);
                 $methods[$method] = (string) BigDecimal::of($methods[$method] ?? '0')->plus($amount)->toScale(2, RoundingMode::HalfUp);
-                $received[$method] = (string) $amount->toScale(2, RoundingMode::HalfUp);
             }
             $amount = BigDecimal::of((string) $row->total);
-            $balance = (string) $row->operacion === '2' && $amount->isGreaterThan($paid) ? $amount->minus($paid) : BigDecimal::zero();
+            $balance = BigDecimal::of($calculation['receivable']);
             $receivable = $receivable->plus($balance);
             $total = $total->plus($amount);
             $documents[$row->tipo_documento] = (string) BigDecimal::of($documents[$row->tipo_documento] ?? '0')->plus($amount)->toScale(2, RoundingMode::HalfUp);
@@ -63,23 +52,17 @@ class CashSnapshotService
             $payments = DB::table('libreria.receipt_payments')->whereIn('receipt_id', $receipts->modelKeys())->get()->groupBy('receipt_id');
             $details = DB::table('libreria.receipt_lines')->whereIn('receipt_id', $receipts->modelKeys())->get()->groupBy('receipt_id');
             foreach ($receipts as $receipt) {
-                $net = [];
+                $received = [];
                 $references = [];
                 foreach ($payments->get($receipt->id, collect()) as $payment) {
-                    $net[$payment->method] = ($net[$payment->method] ?? 0) + ReceiptMoney::cents($payment->amount);
+                    $received[] = ['method' => (string) $payment->method, 'amount' => (string) $payment->amount];
                     if ($payment->reference) {
                         $references[] = $payment->reference;
                     }
                 }
-                if (ReceiptMoney::cents($receipt->change) > 0) {
-                    $net['01'] = ($net['01'] ?? 0) - ReceiptMoney::cents($receipt->change);
-                }
-                foreach ($net as $method => $cents) {
-                    if ($cents < 0) {
-                        throw new RuntimeException('El cambio del recibo excede su efectivo.');
-                    }
-                    $methods[$method] = (string) BigDecimal::of($methods[$method] ?? '0')->plus(ReceiptMoney::decimal($cents))->toScale(2);
-                    $net[$method] = ReceiptMoney::decimal($cents);
+                $net = $this->calculator->native($received, $receipt->getRawOriginal('change'), $receipt->getRawOriginal('total'))['payments'];
+                foreach ($net as $method => $value) {
+                    $methods[$method] = (string) BigDecimal::of($methods[$method] ?? '0')->plus($value)->toScale(2);
                 }
                 $kinds = [];
                 foreach ($details->get($receipt->id, collect()) as $detail) {
