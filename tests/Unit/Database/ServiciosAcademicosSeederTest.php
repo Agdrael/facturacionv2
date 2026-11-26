@@ -55,15 +55,17 @@ function prepareAcademicAssignments(): Connection
     return $db;
 }
 
-test('academic assignments persist real grade identifiers specialty and product foreign keys for normal tuition', function () {
+test('academic assignments cover normal scholarship and benefactor tuition with real grade identifiers and specialties', function () {
     prepareAcademicAssignments();
 
     $this->seed(ServiciosAcademicosSeeder::class);
 
-    $this->assertDatabaseCount('libreria.servicios_academicos', 32);
+    $this->assertDatabaseCount('libreria.servicios_academicos', 96);
     foreach ([49 => 1, 71 => 1, 50 => 2, 51 => 3, 2 => 4, 61 => 12] as $grade => $product) {
-        $this->assertDatabaseHas('libreria.servicios_academicos', ['grado_id' => $grade, 'especialidad' => '', 'producto_id' => $product,
-            'concepto' => 'colegiatura', 'financiamiento' => 'normal']);
+        foreach (['normal', 'beca', 'bienhechor'] as $funding) {
+            $this->assertDatabaseHas('libreria.servicios_academicos', ['grado_id' => $grade, 'especialidad' => '', 'producto_id' => $product,
+                'concepto' => 'colegiatura', 'financiamiento' => $funding]);
+        }
     }
     $this->assertDatabaseHas('libreria.servicios_academicos', ['grado_id' => 22, 'especialidad' => 'bachillerato general', 'producto_id' => 13]);
     $this->assertDatabaseHas('libreria.servicios_academicos', ['grado_id' => 22, 'especialidad' => 'electronica', 'producto_id' => 15]);
@@ -72,19 +74,28 @@ test('academic assignments persist real grade identifiers specialty and product 
         $this->assertDatabaseHas('libreria.servicios_academicos', ['grado_id' => $grade, 'especialidad' => 'informatica', 'producto_id' => $product]);
         $this->assertDatabaseHas('libreria.servicios_academicos', ['grado_id' => $grade, 'especialidad' => 'desarrollo de software', 'producto_id' => $product]);
     }
-    $this->assertDatabaseMissing('libreria.servicios_academicos', ['financiamiento' => 'beca']);
+    foreach (['beca', 'bienhechor'] as $funding) {
+        $this->assertDatabaseHas('libreria.servicios_academicos', ['grado_id' => 24, 'especialidad' => 'desarrollo de software',
+            'producto_id' => 20, 'concepto' => 'colegiatura', 'financiamiento' => $funding]);
+    }
     $this->assertDatabaseMissing('libreria.servicios_academicos', ['concepto' => 'matricula']);
 });
 
-test('repeating academic assignment seeding preserves the number and identifiers of existing links', function () {
+test('repeating academic assignment seeding preserves identifiers and customized scholarship and benefactor links', function () {
     $db = prepareAcademicAssignments();
     $this->seed(ServiciosAcademicosSeeder::class);
+    $db->table('libreria.servicios_academicos')->whereIn('financiamiento', ['beca', 'bienhechor'])
+        ->where('grado_id', 24)->where('especialidad', 'desarrollo de software')->update(['producto_id' => 28]);
     $ids = $db->table('libreria.servicios_academicos')->orderBy('id')->pluck('id')->all();
 
     $this->seed(ServiciosAcademicosSeeder::class);
 
     expect($db->table('libreria.servicios_academicos')->orderBy('id')->pluck('id')->all())->toBe($ids);
-    $this->assertDatabaseCount('libreria.servicios_academicos', 32);
+    $this->assertDatabaseCount('libreria.servicios_academicos', 96);
+    foreach (['beca', 'bienhechor'] as $funding) {
+        $this->assertDatabaseHas('libreria.servicios_academicos', ['grado_id' => 24, 'especialidad' => 'desarrollo de software',
+            'financiamiento' => $funding, 'producto_id' => 28]);
+    }
 });
 
 test('missing or invalid products prevent all academic assignment writes', function (string $problem) {

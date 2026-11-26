@@ -78,6 +78,12 @@ class ServiciosAcademicosSeeder extends Seeder
             }
             DB::table('libreria.servicios_academicos')->upsert($rows,
                 ['grado_id', 'especialidad', 'financiamiento', 'concepto'], ['producto_id', 'updated_at']);
+            // V1 shares tuition income accounts; each funding source keeps its own academic balances.
+            foreach (['beca', 'bienhechor'] as $funding) {
+                DB::table('libreria.servicios_academicos')->insertOrIgnore(array_map(
+                    fn (array $row): array => array_replace($row, ['financiamiento' => $funding]), $rows,
+                ));
+            }
         });
     }
 }

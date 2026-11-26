@@ -219,6 +219,28 @@ test('explicit scholarship product links use their own account and still allow p
     expect(app(TuitionService::class)->fees('1001', 'clientes_varios')['fees'])->toBe([]);
 });
 
+test('explicit funded tuition links allow September October and November while keeping balances separate', function (string $funding, int $quota, int $paid, int $remaining) {
+    $db = prepareTuitionPlatform();
+    foreach ([9, 10, 11] as $month) {
+        tuitionBalance($db, ['id_saldo' => $month, 'mes' => $month]);
+    }
+    DB::table('libreria.servicios_academicos')->insert(['producto_id' => 501, 'grado_id' => 1, 'especialidad' => 'general',
+        'financiamiento' => $funding, 'concepto' => 'colegiatura']);
+
+    $fees = app(TuitionService::class)->fees('1001', $funding)['fees'];
+
+    expect(array_column($fees, 'month'))->toBe([9, 10, 11]);
+    foreach ($fees as $fee) {
+        expect($fee)->toMatchArray(['canSelect' => true, 'configurationError' => null, 'fundingType' => $funding,
+            'quota' => $quota, 'paid' => $paid, 'remaining' => $remaining]);
+        expect($fee['product'])->toMatchArray(['id' => 501, 'incomeAccount' => '7101']);
+    }
+    $this->assertDatabaseHas('saldo_pagos', ['id_saldo' => 9, 'saldo' => 80, 'saldo_beca' => 12.34, 'saldo_bienhechor' => 19.99], 'plataforma');
+})->with([
+    'scholarship' => ['beca', 2000, 500, 1234],
+    'benefactor' => ['bienhechor', 3000, 1000, 1999],
+]);
+
 test('the student search uses last year enrollment and returns paginated public academic data', function () {
     $db = prepareTuitionPlatform();
     $db->table('students')->insert(['student_id' => 1002, 'first_name' => 'Fuera', 'last_name' => 'Prueba']);
