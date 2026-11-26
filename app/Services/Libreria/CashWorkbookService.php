@@ -25,7 +25,7 @@ use ZipArchive;
 
 class CashWorkbookService
 {
-    private const TEMPLATE_REVISION = '3';
+    private const TEMPLATE_REVISION = '4';
 
     private const MAX_EXTRA_CHECK_ROWS = 1000;
 
@@ -221,7 +221,7 @@ class CashWorkbookService
         $sheet->setCellValue('K10', '=SUM(K6,K9)');
         $sheet->setCellValue('K11', '=K32-K23');
         $sheet->setCellValue('K12', '=K38-K24');
-        $sheet->setCellValue('K13', '=SUM(K10:K12)-SUM(K21:K22)');
+        $sheet->setCellValue('K13', '=SUM(K10:K12)-SUM(K21,K22,K25)');
         $sheet->setCellValue('K38', '=SUM(K35:K37)');
         $sheet->setCellValue('K44', (float) $snapshot['receivable']);
         $checks = array_values(array_filter([...$snapshot['sales'], ...($snapshot['receipts'] ?? [])], fn (array $sale): bool => BigDecimal::of($sale['payments']['04'] ?? '0')->isPositive()));

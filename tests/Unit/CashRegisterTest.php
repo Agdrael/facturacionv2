@@ -258,14 +258,14 @@ test('Excel delivery preserves system totals while permitting physical counts an
 test('cash workbook subtracts partial remittances and accepts counted third party checks without changing expected amounts', function () {
     prepareCashControl($this);
     $record = cashClosedRecord($this);
-    $changes = ['D5' => 500, 'D21' => 10, 'D22' => 20, 'D23' => 25, 'D24' => 50,
+    $changes = ['D5' => 500, 'D21' => 10, 'D22' => 20, 'D23' => 25, 'D24' => 50, 'D25' => 5.75,
         'K29' => 120, 'K30' => 30, 'C35' => 'CH-001', 'D35' => 'Beneficiario', 'K35' => 200, 'K36' => 100];
     $file = cashEditedWorkbook($record, $changes);
     $book = IOFactory::load($file->getPathname());
     $sheet = $book->getSheetByName('Arqueo');
     expect($sheet->getCell('K11')->getCalculatedValue())->toEqual(125);
     expect($sheet->getCell('K12')->getCalculatedValue())->toEqual(250);
-    expect($sheet->getCell('K13')->getCalculatedValue())->toEqual(845);
+    expect($sheet->getCell('K13')->getCalculatedValue())->toEqual(839.25);
     expect($sheet->getCell('K38')->getCalculatedValue())->toEqual(300);
     expect($sheet->getCell('J48')->getValue())->toEqual(0);
     expect($sheet->getStyle('K35')->getProtection()->getLocked())->toBe(Protection::PROTECTION_UNPROTECTED);
@@ -390,7 +390,7 @@ test('updating an unsigned workbook preserves previous versions and entered data
     expect($sheet->getCell('K35')->getValue())->toEqual(9.50);
     expect($sheet->getCell('C35')->getValue())->toBe('CHEQUE-MANUAL');
     expect($sheet->getCell('C50')->getValue())->toBe('Datos ya entregados');
-    expect($sheet->getCell('K13')->getValue())->toBe('=SUM(K10:K12)-SUM(K21:K22)');
+    expect($sheet->getCell('K13')->getValue())->toBe('=SUM(K10:K12)-SUM(K21,K22,K25)');
     expect($sheet->getStyle('K35')->getProtection()->getLocked())->toBe(Protection::PROTECTION_UNPROTECTED);
     $book->disconnectWorksheets();
     $this->post(route('libreria.arqueos.upload', $record->id), ['archivo' => $oldUpload])->assertSessionHasErrors('archivo');
@@ -426,6 +426,39 @@ test('review and signature apply to the delivered version and signed workbooks c
     $this->post(route('libreria.arqueos.template', $record->id))->assertSessionHasErrors('archivo');
     expect($record->fresh()->archivos)->toHaveCount(4);
     $this->get(route('libreria.arqueos.download', [$record->id, 'firmado']))->assertOk();
+});
+
+test('refreshing the workbook subtracts Otros and retains manually added check rows and sums', function () {
+    prepareCashControl($this);
+    $record = cashClosedRecord($this);
+    $oldPath = app(CashWorkbookService::class)->original($record, auth()->user());
+    $book = IOFactory::load(Storage::disk('cash')->path($oldPath));
+    $book->getSheetByName('_Control')->setCellValue('A4', '3');
+    $book->getSheetByName('Arqueo')->setCellValue('K13', '=SUM(K10:K12)-SUM(K21:K22)');
+    $writer = new Xlsx($book);
+    $writer->setPreCalculateFormulas(false);
+    $writer->save(Storage::disk('cash')->path($oldPath));
+    $book->disconnectWorksheets();
+    $upload = cashEditedWorkbook($record, [], function ($book): void {
+        $sheet = $book->getSheetByName('Arqueo');
+        $sheet->insertNewRowBefore(38, 2);
+        $sheet->setCellValue('D5', 100);
+        $sheet->setCellValue('D25', 7.50);
+        $sheet->setCellValue('K35', 5);
+        $sheet->setCellValue('K39', 10);
+        $sheet->setCellValue('K40', '=SUM(K35:K39)');
+    });
+    $this->post(route('libreria.arqueos.upload', $record->id), ['archivo' => $upload])->assertSessionHasNoErrors();
+    $this->post(route('libreria.arqueos.template', $record->id))->assertSessionHasNoErrors();
+    $record->refresh();
+    $book = IOFactory::load(Storage::disk('cash')->path($record->original_path));
+    $sheet = $book->getSheetByName('Arqueo');
+    expect($sheet->getCell('K25')->getCalculatedValue())->toEqual(7.50);
+    expect($sheet->getCell('K39')->getValue())->toEqual(10);
+    expect($sheet->getCell('K40')->getValue())->toBe('=SUM(K35:K39)');
+    expect($sheet->getCell('K13')->getCalculatedValue())->toEqual(107.50);
+    expect($record->estado)->toBe('pendiente_excel');
+    $book->disconnectWorksheets();
 });
 
 test('a failed Excel export never reopens or duplicates the closed session and can be retried', function () {
