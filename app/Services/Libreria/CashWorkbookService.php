@@ -218,10 +218,10 @@ class CashWorkbookService
         $sheet->setCellValue('E14', (float) ($snapshot['documents']['03'] ?? 0));
         $sheet->setCellValue('F14', (float) ($snapshot['receiptTotal'] ?? 0));
         $sheet->setCellValue('D21', 0);
-        $sheet->setCellValue('K10', '=SUM(K6,K9)');
+        $sheet->setCellValue('K10', '=SUM(K6,K9)-SUM(K21,K22,K25)');
         $sheet->setCellValue('K11', '=K32-K23');
         $sheet->setCellValue('K12', '=K38-K24');
-        $sheet->setCellValue('K13', '=SUM(K10:K12)-SUM(K21,K22,K25)');
+        $sheet->setCellValue('K13', '=SUM(K10:K12)');
         $sheet->setCellValue('K38', '=SUM(K35:K37)');
         $sheet->setCellValue('K44', (float) $snapshot['receivable']);
         $checks = array_values(array_filter([...$snapshot['sales'], ...($snapshot['receipts'] ?? [])], fn (array $sale): bool => BigDecimal::of($sale['payments']['04'] ?? '0')->isPositive()));
@@ -252,7 +252,7 @@ class CashWorkbookService
             $sheet->getRowDimension($row)->setRowHeight(30);
         }
         $sheet->setCellValue('D48', (float) ($methods['01'] ?? 0));
-        $sheet->setCellValue('F48', '=SUM(K6,K9,K21,K22,K25)');
+        $sheet->setCellValue('F48', '=SUM(K6,K9,K32,K38)');
         $sheet->setCellValue('H48', '=F48-D48');
         $sheet->setCellValue('J48', (float) ($methods['04'] ?? 0));
         $this->text($sheet, 'D45', 'EFECTIVO ESPERADO');
