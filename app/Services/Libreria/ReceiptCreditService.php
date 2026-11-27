@@ -171,8 +171,11 @@ class ReceiptCreditService
             $oldFace = $cxc === null ? 0 : ReceiptMoney::cents($cxc->monto);
             $oldRemaining = $cxc === null ? 0 : ReceiptMoney::cents($cxc->parciales ?? $cxc->monto);
             if (! $reverse && $cxc !== null && $oldFace > 0) {
-                $known = $this->nativeObligations($cxc->id)->sum('amount');
-                $this->sources->require(ReceiptMoney::cents($known) === $oldFace, 'La cuota ya estaba facturada en CXC. No se puede crear otra deuda sobre ella.');
+                $billing = $this->academicBilling($db, $cxc);
+                $this->sources->require($billing['amount'] === $oldFace, 'No se puede identificar el financiamiento de toda la CXC existente. Concilia sus facturas antes de emitir otra.');
+                foreach ($lines as $line) {
+                    $this->assertFundingNotBilled($billing['funding'], $line['claim']['financiamiento']);
+                }
             }
             if ($reverse && $cxc === null) {
                 continue;
@@ -271,9 +274,70 @@ class ReceiptCreditService
             return;
         }
         $cxc = $rows->first();
-        $known = $this->nativeObligations($cxc->id);
-        $face = ReceiptMoney::cents((clone $known)->sum('amount'));
-        $this->sources->require($face === ReceiptMoney::cents($cxc->monto) && ! (clone $known)->where('data->funding', $funding)->exists(), 'Esta cuota ya está facturada. Cobra su saldo mediante un recibo, sin emitir otro DTE.');
+        $billing = $this->academicBilling($this->sources->platform(), $cxc);
+        $this->assertFundingNotBilled($billing['funding'], $funding);
+        $this->sources->require($billing['amount'] === ReceiptMoney::cents($cxc->monto), 'No se puede identificar el financiamiento de toda la CXC existente. Concilia sus facturas antes de emitir otra.');
+    }
+
+    /** @param list<string> $billed */
+    private function assertFundingNotBilled(array $billed, string $funding): void
+    {
+        $label = match ($funding) {
+            'beca' => 'la beca', 'bienhechor' => 'el bienhechor', default => 'el responsable familiar',
+        };
+        $this->sources->require(! in_array($funding, $billed, true), 'La parte de esta cuota correspondiente a '.$label.' ya está facturada. Cobra su saldo mediante un recibo, sin emitir otro DTE.');
+    }
+
+    /** @return array{amount: int, funding: list<string>} */
+    private function academicBilling(Connection $platform, stdClass $cxc): array
+    {
+        $amount = 0;
+        $funding = [];
+        foreach ($this->nativeObligations($cxc->id)->get(['amount', 'data']) as $obligation) {
+            $data = $this->sources->data($obligation);
+            $amount += ReceiptMoney::cents($obligation->amount);
+            $funding[] = $data['funding'];
+        }
+        if ($amount === ReceiptMoney::cents($cxc->monto)) {
+            return ['amount' => $amount, 'funding' => array_values(array_unique($funding))];
+        }
+        $details = $platform->table('public.detalle_pagos')->where('student_id', $cxc->student_id)->where('syear', $cxc->syear)
+            ->where('mes_pagado', (int) $cxc->item_pago)->where('facturado', true)->whereNotNull('uid_dte')
+            ->whereRaw('LOWER(TRIM(lugar)) = ?', ['colecturia'])
+            ->where(function (Builder $query): void {
+                $query->whereNull('estado')->orWhereRaw('LOWER(TRIM(estado)) <> ?', ['anulado']);
+            })->get(['uid_dte', 'numero_dte', 'monto', 'pago_beca', 'pago_bienhechor']);
+        $references = $details->map(fn ($row) => mb_strtolower(trim((string) $row->uid_dte)))->filter(fn ($uuid) => Str::isUuid($uuid))->unique()->values()->all();
+        if ($references === []) {
+            return ['amount' => $amount, 'funding' => array_values(array_unique($funding))];
+        }
+        $native = DB::table('libreria.venta_dtes')->whereIn(DB::raw('LOWER(TRIM(CAST(codigo_generacion AS TEXT)))'), $references)
+            ->pluck('codigo_generacion')->map(fn ($uuid) => mb_strtolower(trim($uuid)))->all();
+        $invoices = $this->sources->legacy()->table('public.ventas')->whereIn(DB::raw('LOWER(TRIM(CAST(numero_factura AS TEXT)))'), array_values(array_diff($references, $native)))
+            ->where('operacion', '2')->where(function (Builder $query): void {
+                $query->whereNull('anulado')->orWhere('anulado', false);
+            })->get(['numero_factura', 'numero_control', 'n_carnet'])->groupBy(fn ($row) => mb_strtolower(trim($row->numero_factura)));
+        $seen = [];
+        foreach ($details as $detail) {
+            $uuid = mb_strtolower(trim((string) $detail->uid_dte));
+            $matches = $invoices->get($uuid);
+            if ($matches === null) {
+                continue;
+            }
+            $this->sources->require($matches->count() === 1, 'Hay facturas anteriores duplicadas para esta cuota. Requiere conciliación.');
+            $invoice = $matches->first();
+            $this->sources->require((string) $invoice->n_carnet === (string) $cxc->student_id
+                && trim((string) $invoice->numero_control) !== '' && trim((string) $detail->numero_dte) === trim((string) $invoice->numero_control)
+                && ! ($detail->pago_beca && $detail->pago_bienhechor), 'No se puede verificar la factura y el financiamiento de la CXC anterior. Requiere conciliación.');
+            $type = $detail->pago_beca ? 'beca' : ($detail->pago_bienhechor ? 'bienhechor' : 'normal');
+            $key = $uuid.':'.$type;
+            $this->sources->require(! isset($seen[$key]) && ReceiptMoney::cents($detail->monto) > 0, 'Hay detalles académicos duplicados o importes inválidos en la CXC anterior. Requiere conciliación.');
+            $seen[$key] = true;
+            $amount += ReceiptMoney::cents($detail->monto);
+            $funding[] = $type;
+        }
+
+        return ['amount' => $amount, 'funding' => array_values(array_unique($funding))];
     }
 
     private function nativeObligations(int $cxcId): Builder

@@ -399,6 +399,82 @@ test('academic credits allocate initial cents between students and funding witho
     $this->assertDatabaseHas('public.saldo_pagos', ['student_id' => '502', 'saldo_beca' => 25, 'pago_beca' => 0], 'plataforma');
 });
 
+test('a verified legacy credit does not block a different academic funding or merge its payments', function (string $oldFunding, string $newFunding) {
+    prepareReceipts($this);
+    $debt = receiptAcademicDebt('40.00');
+    $platform = DB::connection('plataforma');
+    $platform->table('public.saldo_pagos')->update(['pago' => 0, 'saldo' => 25, 'pago_beca' => 0, 'saldo_beca' => 25,
+        'pago_bienhechor' => 0, 'saldo_bienhechor' => 25]);
+    [$oldPaid, $oldBalance] = ReceiptSourceService::fundingColumns($oldFunding);
+    $platform->table('public.saldo_pagos')->update([$oldPaid => 10, $oldBalance => 40]);
+    $platform->table('public.detalle_pagos')->insert(['student_id' => '501', 'syear' => 2025, 'mes_pagado' => 2, 'monto' => 50,
+        'uid_dte' => ' '.mb_strtoupper($debt['uuid']).' ', 'numero_dte' => 'DTE-LEGACY-2025', 'facturado' => true, 'lugar' => 'colecturia',
+        'pago_beca' => $oldFunding === 'beca', 'pago_bienhechor' => $oldFunding === 'bienhechor']);
+    $platform->table('public.detalle_pagos')->insert(['student_id' => '501', 'syear' => 2025, 'mes_pagado' => 2, 'monto' => 10,
+        'uid_dte' => $debt['uuid'], 'numero_dte' => 'DTE-LEGACY-2025', 'facturado' => true, 'lugar' => 'Colecturia/Recibo',
+        'pago_beca' => $oldFunding === 'beca', 'pago_bienhechor' => $oldFunding === 'bienhechor']);
+    $credits = app(ReceiptCreditService::class);
+
+    $credits->assertAcademicNotBilled('501', 2025, 2, $newFunding);
+    expect(fn () => $credits->assertAcademicNotBilled('501', 2025, 2, $oldFunding))->toThrow(ValidationException::class, 'ya está facturada');
+
+    DB::table('libreria.ventas')->insert(['id' => 10, 'cliente_id' => 1, 'operacion' => '2', 'total' => 25, 'estado' => 'GENERADO']);
+    DB::table('libreria.venta_detalles')->insert(['venta_id' => 10, 'carnet_estudiante' => '501', 'nombre' => 'Colegiatura', 'valor_final' => 25, 'cuenta_cargo' => '110201010102']);
+    DB::table('libreria.venta_cuotas')->insert(['venta_id' => 10, 'saldo_id' => 2025, 'carnet_estudiante' => '501', 'anio' => 2025, 'mes' => 2, 'monto' => 25, 'financiamiento' => $newFunding, 'ambiente' => '01']);
+    DB::table('libreria.venta_dtes')->insert(['id' => 10, 'venta_id' => 10, 'user_id' => auth()->id(), 'codigo_generacion' => (string) Str::uuid(), 'numero_control' => 'DTE-CREDIT-10',
+        'transmision_estado' => 'ACEPTADO', 'sello_recepcion' => 'SEAL', 'documento' => json_encode(['identificacion' => ['ambiente' => '01', 'fecEmi' => '2026-11-20'], 'resumen' => ['condicionOperacion' => 2]]),
+        'cliente' => json_encode(['name' => 'Responsable de la nueva parte']), 'pagos' => json_encode(['paid' => '5.00', 'change' => '0.00'])]);
+    $journal = DB::table('libreria.venta_dtes')->where('id', 10)->first();
+
+    $this->postJson(route('libreria.recibos.credits.register', 10))->assertOk();
+    $this->postJson(route('libreria.recibos.credits.register', 10))->assertOk();
+
+    $this->assertDatabaseHas('public.cxc', ['id' => $debt['id'], 'monto' => 75, 'parciales' => 60, 'custom_275' => 'Responsable'], 'plataforma');
+    [$newPaid, $newBalance] = ReceiptSourceService::fundingColumns($newFunding);
+    $this->assertDatabaseHas('public.saldo_pagos', [$oldPaid => 10, $oldBalance => 40, $newPaid => 5, $newBalance => 20], 'plataforma');
+    $this->assertDatabaseHas('libreria.receipt_obligations', ['source_key' => 'academic:'.$debt['id'].':'.$newFunding, 'amount' => 25, 'remaining' => 20]);
+    expect(fn () => $credits->assertAcademicNotBilled('501', 2025, 2, $newFunding))->toThrow(ValidationException::class, 'ya está facturada');
+    expect($platform->table('public.detalle_pagos')->count())->toBe(3);
+    expect($platform->table('public.revisiones')->count())->toBe(0);
+    DB::connection('receipt_legacy')->table('public.ventas')->insert(['id_venta' => 10, 'numero_factura' => $journal->codigo_generacion,
+        'numero_control' => $journal->numero_control, 'total' => 25, 'operacion' => '2', 'anulado' => false, 'n_carnet' => '501']);
+    $thirdFunding = array_values(array_diff(['normal', 'beca', 'bienhechor'], [$oldFunding, $newFunding]))[0];
+    $credits->assertAcademicNotBilled('501', 2025, 2, $thirdFunding);
+    $credits->reverse($journal);
+    $this->assertDatabaseHas('public.cxc', ['id' => $debt['id'], 'monto' => 50, 'parciales' => 40], 'plataforma');
+    $this->assertDatabaseHas('public.saldo_pagos', [$oldPaid => 10, $oldBalance => 40, $newPaid => 0, $newBalance => 25], 'plataforma');
+    $credits->assertAcademicNotBilled('501', 2025, 2, $newFunding);
+    Http::assertNothingSent();
+})->with([['normal', 'beca'], ['normal', 'bienhechor'], ['beca', 'normal']]);
+
+test('an unverified legacy funding still requires reconciliation before another invoice', function (string $problem) {
+    prepareReceipts($this);
+    $debt = receiptAcademicDebt();
+    $platform = DB::connection('plataforma');
+    $detail = ['student_id' => '501', 'syear' => 2025, 'mes_pagado' => 2, 'monto' => 50,
+        'uid_dte' => $debt['uuid'], 'numero_dte' => 'DTE-LEGACY-2025', 'facturado' => true, 'lugar' => 'colecturia',
+        'pago_beca' => false, 'pago_bienhechor' => false];
+    match ($problem) {
+        'amount' => $detail['monto'] = 49,
+        'year' => $detail['syear'] = 2024,
+        'reference' => $detail['numero_dte'] = 'ANOTHER-INVOICE',
+        'receipt' => $detail['lugar'] = 'Colecturia/Recibo',
+        'funding' => [$detail['pago_beca'], $detail['pago_bienhechor']] = [true, true],
+        'cash' => DB::connection('receipt_legacy')->table('public.ventas')->update(['operacion' => '1']),
+        default => null,
+    };
+    $platform->table('public.detalle_pagos')->insert($detail);
+    if ($problem === 'duplicate') {
+        $platform->table('public.detalle_pagos')->insert($detail);
+    }
+
+    expect(fn () => app(ReceiptCreditService::class)->assertAcademicNotBilled('501', 2025, 2, 'beca'))->toThrow(ValidationException::class);
+
+    $this->assertDatabaseHas('public.cxc', ['id' => $debt['id'], 'monto' => 50, 'parciales' => null], 'plataforma');
+    $this->assertDatabaseCount('libreria.receipt_obligations', 0);
+    Http::assertNothingSent();
+})->with(['amount', 'year', 'reference', 'receipt', 'funding', 'cash', 'duplicate']);
+
 test('family and scholarship credits share one CXC without merging their obligations or blocking each other', function () {
     prepareReceipts($this);
     $platform = DB::connection('plataforma');
