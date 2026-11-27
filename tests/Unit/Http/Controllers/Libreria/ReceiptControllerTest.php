@@ -643,6 +643,36 @@ test('academic CXC diagnostics distinguish missing debt and unknown students and
     Http::assertNothingSent();
 });
 
+test('academic diagnostics preserve actual receipt flags and identify the exact funding balance using the same SQL as the list', function () {
+    prepareReceipts($this);
+    $platform = DB::connection('plataforma');
+    foreach ([2 => null, 3 => false, 4 => true, 5 => 'false', 6 => null] as $month => $receiptFlag) {
+        $platform->table('public.cxc')->insert(['id' => $month, 'student_id' => '501', 'syear' => 2025, 'item_pago' => (string) $month,
+            'facturado' => true, 'recibo' => $receiptFlag, 'monto' => 50, 'parciales' => 50]);
+        $platform->table('public.saldo_pagos')->insert(['id_saldo' => 100 + $month, 'student_id' => '501', 'syear' => 2025, 'mes' => $month,
+            'saldo' => $month === 6 ? 0 : 50, 'saldo_beca' => 25, 'saldo_bienhechor' => 10]);
+    }
+    Log::spy();
+
+    $result = $this->getJson(route('libreria.recibos.cxc', ['q' => '501', 'year' => 2025, 'funding' => 'normal', 'diagnostic' => 1]))
+        ->assertOk()->assertJsonPath('diagnostic.complete', true)->assertJsonPath('diagnostic.source_database', ':memory:')
+        ->assertJsonPath('diagnostic.cxc_table', 'public.cxc')->assertJsonPath('diagnostic.balance_table', 'public.saldo_pagos');
+
+    $rows = collect($result->json('diagnostic.cxc_rows'))->keyBy('id');
+    expect($rows[2]['recibo'])->toBeNull();
+    expect($rows[2]['included_by_filters'])->toBeTrue();
+    expect($rows[3]['included_by_filters'])->toBeTrue();
+    expect($rows[4]['exclusion_reasons'][0])->toStartWith('RECIBO_PAGADO:');
+    expect($rows[5]['recibo'])->toBe('false');
+    expect($rows[5]['exclusion_reasons'][0])->toStartWith('RECIBO_VALOR_NO_ADMITIDO:');
+    expect($rows[6]['exclusion_reasons'][0])->toContain('public.saldo_pagos.saldo', 'id_saldo #106: saldo = 0');
+    expect($rows[6]['funding_balances'])->toBe([['id_saldo' => 106, 'syear' => 2025, 'mes' => 6, 'column' => 'saldo', 'value' => 0]]);
+    $this->getJson(route('libreria.recibos.cxc', ['q' => '501', 'year' => 2025, 'funding' => 'normal']))
+        ->assertOk()->assertJsonCount(2, 'data')->assertJsonPath('data.0.cxcId', 2)->assertJsonPath('data.1.cxcId', 3);
+    Log::shouldNotHaveReceived('warning');
+    Http::assertNothingSent();
+});
+
 test('explicit academic diagnostics show server exclusion reasons even when logging is unavailable without changing debts', function () {
     prepareReceipts($this);
     config(['app.env' => 'production']);

@@ -19,6 +19,16 @@ function normal(state) {
     state.exact();
 }
 
+test('diagnostic values distinguish SQL null booleans zero and literal text', () => {
+    const state = workspace();
+    assert.equal(state.diagnosticValue(null), 'NULL');
+    assert.equal(state.diagnosticValue(false), 'false');
+    assert.equal(state.diagnosticValue(true), 'true');
+    assert.equal(state.diagnosticValue(0), '0');
+    assert.equal(state.diagnosticValue('false'), '"false"');
+    assert.equal(state.diagnosticValue('NULL'), '"NULL"');
+});
+
 test('explicit academic diagnostics request the selected server carnet and show results without changing receipt fields', async () => {
     const state = workspace(); normal(state); const shown = [];
     const original = structuredClone(state.form);

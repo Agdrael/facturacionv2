@@ -91,6 +91,7 @@ export function createReceiptWorkspace(options = {}) {
             finally { if (sequence === this.diagnosticSequence) this.diagnosticLoading = false; }
         },
         diagnosticReason(value) { return String(value).replace(/^[A-Z_]+:\s*/, ''); },
+        diagnosticValue(value) { return value === null || value === undefined ? 'NULL' : (typeof value === 'string' ? JSON.stringify(value) : String(value)); },
         async choose(row) {
             if (this.locked || this.selecting) return;
             if (this.lookupKind === 'clients') {

@@ -39,9 +39,15 @@ class ReceiptSourceService
             'environment' => config('app.env'), 'complete' => false];
         try {
             [, $column] = self::fundingColumns($funding);
+            $context['source_database'] = $this->platform()->getDatabaseName();
+            $context['cxc_table'] = 'public.cxc';
+            $context['balance_table'] = 'public.saldo_pagos';
             $rows = $this->platform()->table('public.cxc')->where('student_id', $student)
                 ->when($year !== null, fn ($query) => $query->orderByRaw('CASE WHEN syear = ? THEN 0 ELSE 1 END', [$year]))
-                ->orderByDesc('syear')->orderBy('id')->limit(101)->get(['id', 'syear', 'item_pago', 'monto', 'parciales', 'facturado', 'recibo']);
+                ->orderByDesc('syear')->orderBy('id')->limit(101)->select(['id', 'syear', 'item_pago', 'monto', 'parciales', 'facturado', 'recibo'])
+                ->selectRaw('CASE WHEN facturado = ? THEN 1 ELSE 0 END AS diagnostic_facturado_true', [true])
+                ->selectRaw('CASE WHEN recibo = ? THEN 1 ELSE 0 END AS diagnostic_recibo_true', [true])
+                ->selectRaw('CASE WHEN recibo IS NULL OR recibo = ? THEN 1 ELSE 0 END AS diagnostic_recibo_allowed', [false])->get();
             $balances = $this->platform()->table('public.saldo_pagos')->whereRaw('CAST(student_id AS VARCHAR) = ?', [$student])
                 ->orderBy('id_saldo')->get(['id_saldo', 'syear', 'mes', 'saldo', 'saldo_beca', 'saldo_bienhechor']);
             $byPeriod = $balances->groupBy(fn ($row) => $row->syear.':'.$row->mes);
@@ -65,11 +71,13 @@ class ReceiptSourceService
                 if ($year !== null && (int) $row->syear !== $year) {
                     $reasons[] = 'ANIO_FILTRADO: la CXC pertenece a otro año.';
                 }
-                if (! $row->facturado) {
-                    $reasons[] = 'NO_FACTURADA: facturado es false o NULL.';
+                if ((int) $row->diagnostic_facturado_true !== 1) {
+                    $reasons[] = 'NO_FACTURADA: public.cxc.facturado no coincide con true; revisa el valor leído.';
                 }
-                if ($row->recibo) {
-                    $reasons[] = 'RECIBO_PAGADO: recibo es true.';
+                if ((int) $row->diagnostic_recibo_allowed !== 1) {
+                    $reasons[] = (int) $row->diagnostic_recibo_true === 1
+                        ? 'RECIBO_PAGADO: public.cxc.recibo = true en la CXC #'.$row->id.'.'
+                        : 'RECIBO_VALOR_NO_ADMITIDO: public.cxc.recibo contiene un valor que no coincide con NULL ni false; revisa el valor y tipo de la columna.';
                 }
                 if (ReceiptMoney::cents($row->parciales ?? $row->monto ?? 0) <= 0) {
                     $reasons[] = 'SIN_SALDO_CXC: parciales es cero o negativo; monto solo se usa cuando parciales es NULL.';
@@ -77,10 +85,13 @@ class ReceiptSourceService
                 if ($matching->isEmpty()) {
                     $reasons[] = 'SIN_SALDO_PAGOS: no coincide carnet, año y mes en saldo_pagos.';
                 } elseif (! $matching->contains(fn ($balance) => ReceiptMoney::cents($balance->{$column} ?? 0) > 0)) {
-                    $reasons[] = 'SIN_SALDO_FINANCIAMIENTO: '.$column.' no es mayor que cero.';
+                    $values = $matching->map(fn ($balance) => 'id_saldo #'.$balance->id_saldo.': '.$column.' = '.($balance->{$column} === null ? 'NULL' : (string) $balance->{$column}))->implode('; ');
+                    $reasons[] = 'SIN_SALDO_FINANCIAMIENTO: public.saldo_pagos.'.$column.' no tiene saldo positivo para este carnet, año y mes. '.$values.'.';
                 }
 
                 return (array) $row + ['matching_balance_ids' => $matching->pluck('id_saldo')->all(),
+                    'funding_balances' => $matching->map(fn ($balance) => ['id_saldo' => $balance->id_saldo, 'syear' => $balance->syear,
+                        'mes' => $balance->mes, 'column' => $column, 'value' => $balance->{$column}])->all(),
                     'included_by_filters' => $reasons === [], 'exclusion_reasons' => $reasons];
             })->all();
             $context['complete'] = true;
