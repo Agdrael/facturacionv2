@@ -3,8 +3,13 @@
         <header class="access-header">
             <div class="access-hero"><div class="flex items-start gap-4"><span class="access-hero-icon"><flux:icon.lock-closed class="size-6" /></span><div><p class="access-eyebrow">Librería / Control de caja</p><h1 class="mt-2 text-2xl font-semibold text-brand-paper">Caja y arqueos</h1><p class="mt-2 text-sm text-brand-paper/65">Apertura, cierre y entrega del arqueo de cada sesión.</p></div></div><span class="access-badge border-brand-paper/20! text-brand-paper!">Punto asignado: {{ $point }}</span></div>
         </header>
-        @if (session('status'))<flux:callout variant="success">{{ session('status') }}</flux:callout>@endif
-        @if ($errors->any())<flux:callout variant="danger"><ul class="list-disc ps-4">@foreach ($errors->all() as $message)<li>{{ $message }}</li>@endforeach</ul></flux:callout>@endif
+        @if ($errors->any())
+            <x-catalog-notice name="cash-feedback" title="No se pudo completar la operación" kind="error" :automatic="true">
+                <ul class="list-disc space-y-2 ps-4">@foreach ($errors->all() as $message)<li>{{ $message }}</li>@endforeach</ul>
+            </x-catalog-notice>
+        @elseif (session('status'))
+            <x-catalog-notice name="cash-feedback" title="Información de la caja" kind="success" :automatic="true">{{ session('status') }}</x-catalog-notice>
+        @endif
         @if (! in_array($point, config('cash.registers'), true))
             <flux:callout>El punto {{ $point }} no requiere apertura ni cierre de caja. Su operación de ventas continúa como antes.</flux:callout>
         @endif

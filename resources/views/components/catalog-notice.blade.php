@@ -13,7 +13,11 @@
             </div>
             <div role="{{ $kind === 'error' ? 'alert' : 'status' }}" class="max-h-80 overflow-y-auto rounded-xl border border-zinc-200 bg-zinc-50 p-5 text-sm leading-7 text-zinc-700">{{ $slot }}</div>
             <div class="flex justify-end border-t border-zinc-200 pt-4">
+                @isset($actions)
+                    {{ $actions }}
+                @else
                 <flux:modal.close><flux:button type="button" variant="primary" icon="check">Entendido</flux:button></flux:modal.close>
+                @endisset
             </div>
         </div>
     </flux:modal>

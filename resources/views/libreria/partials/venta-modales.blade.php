@@ -169,6 +169,15 @@
     </div>
 </flux:modal>
 <x-catalog-notice name="sale-generation-notice" title="Información de la venta"><p class="whitespace-pre-line" x-text="generationNotice"></p></x-catalog-notice>
+<x-catalog-notice name="sale-payment-excess" title="Confirma el monto recibido">
+    <p>El monto recibido supera el total de la venta. Revisa el pago y el cambio antes de emitir.</p>
+    <dl class="mt-4 space-y-2 tabular-nums">
+        <div class="flex justify-between gap-4"><dt>Total a pagar</dt><dd class="font-semibold" x-text="money(paymentExcess?.total || 0)"></dd></div>
+        <div class="flex justify-between gap-4"><dt>Monto recibido</dt><dd class="font-semibold" x-text="money(paymentExcess?.paid || 0)"></dd></div>
+        <div class="flex justify-between gap-4"><dt>Cambio en efectivo</dt><dd class="font-semibold" x-text="money(paymentExcess?.change || 0)"></dd></div>
+    </dl>
+    <x-slot:actions><div class="flex flex-wrap justify-end gap-3"><flux:button type="button" x-on:click="cancelExcessPayment()">Revisar pago</flux:button><flux:button type="button" variant="primary" x-on:click="confirmExcessPayment()" x-bind:disabled="generating">Confirmar y emitir</flux:button></div></x-slot:actions>
+</x-catalog-notice>
 
 @include('libreria.partials.venta-historial')
 

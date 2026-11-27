@@ -11,9 +11,53 @@ function sale() {
     state.client = { id: 1, name: 'Cliente', documents: { '13': '00000000-0' } };
     state.document.date = '2026-11-11';
     state.items = [{ productId: 1, name: 'Producto', quantity: 1, price: 1130, netPrice: '10', discount: 0 }];
-    state.payments = [{ method: '01', amount: '20', reference: '' }];
+    state.payments = [{ method: '01', amount: '11.30', reference: '' }];
     return state;
 }
+
+test('excess sale payments require explicit confirmation of the current amounts and cancellation keeps the draft', async () => {
+    const state = sale(); const shown = []; let calls = 0;
+    state.$flux = { modal: name => ({ show() { shown.push(name); }, close() {} }) };
+    state.postGeneration = async () => { calls++; return { id: 1 }; };
+    state.payments = [{ method: '01', amount: '10' }, { method: '02', amount: '5' }];
+
+    await state.generateSale();
+    assert.equal(calls, 0);
+    assert.deepEqual(shown, ['sale-payment-excess']);
+    assert.deepEqual([state.paymentExcess.total, state.paymentExcess.paid, state.paymentExcess.change], [1130, 1500, 370]);
+    assert.equal(state.requestKey, null);
+    state.cancelExcessPayment();
+    assert.equal(state.paymentExcess, null);
+    assert.equal(state.items.length, 1);
+    assert.equal(state.payments[0].amount, '10');
+    await state.generateSale();
+    state.payments[0].amount = '11';
+    await state.confirmExcessPayment();
+    assert.equal(calls, 0);
+    assert.equal(state.paymentExcess.change, 470);
+    await state.confirmExcessPayment();
+    await state.confirmExcessPayment();
+    assert.equal(calls, 1);
+    assert.equal(state.generated.id, 1);
+    state.newSale();
+    assert.equal(state.paymentApproval, null);
+});
+
+test('an approved sale excess retries the same request while noncash excess cannot be approved', async () => {
+    const state = sale(); const requests = [];
+    state.payments = [{ method: '02', amount: '20' }];
+    state.postGeneration = async (url, body) => { requests.push(body); throw new Error('Sin respuesta'); };
+    await state.generateSale();
+    assert.equal(requests.length, 0);
+    assert.match(state.notice, /efectivo/);
+    assert.equal(state.paymentExcess, null);
+    state.payments = [{ method: '01', amount: '20' }];
+    await state.generateSale();
+    await state.confirmExcessPayment();
+    await state.generateSale();
+    assert.equal(requests.length, 2);
+    assert.deepEqual(requests[0], requests[1]);
+});
 
 test('preparation uses server totals and invalidates the quote when the basket changes', async () => {
     const state = sale(); let payload;

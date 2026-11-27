@@ -4,8 +4,13 @@
             <div><p class="access-eyebrow">Librería / Caja y arqueos</p><h1 class="mt-2 text-2xl font-semibold text-brand-paper">Preparar integración V1 · {{ $register }}</h1><p class="mt-2 max-w-2xl text-sm leading-6 text-brand-paper/65">Confirma los movimientos anteriores a la activación. Los recibos antiguos no conservan hora; selecciona el turno al que pertenecen.</p></div>
             <flux:button :href="route('libreria.cajas.index')" icon="arrow-left">Volver a cajas</flux:button>
         </div></header>
-        @if (session('status'))<flux:callout variant="success">{{ session('status') }}</flux:callout>@endif
-        @if ($errors->any())<flux:callout variant="danger"><ul class="list-disc ps-4">@foreach ($errors->all() as $message)<li>{{ $message }}</li>@endforeach</ul></flux:callout>@endif
+        @if ($errors->any())
+            <x-catalog-notice name="legacy-cash-feedback" title="No se pudo guardar la conciliación" kind="error" :automatic="true">
+                <ul class="list-disc space-y-2 ps-4">@foreach ($errors->all() as $message)<li>{{ $message }}</li>@endforeach</ul>
+            </x-catalog-notice>
+        @elseif (session('status'))
+            <x-catalog-notice name="legacy-cash-feedback" title="Integración V1 actualizada" kind="success" :automatic="true">{{ session('status') }}</x-catalog-notice>
+        @endif
         <section class="access-panel space-y-4 p-5">
             <div class="flex flex-wrap items-center justify-between gap-3"><div><h2 class="font-semibold">Conciliación inicial</h2><p class="access-muted mt-1 text-sm">El cierre queda bloqueado mientras existan movimientos pendientes.</p></div><span class="access-badge">{{ $pending->total() }} pendientes</span></div>
             <div class="grid gap-3 md:grid-cols-3">

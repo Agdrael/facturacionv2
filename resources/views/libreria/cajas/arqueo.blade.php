@@ -1,8 +1,13 @@
 <x-layouts::app :title="'Arqueo #'.$record->id">
     <div class="access-workspace space-y-6">
         <header class="access-header"><div class="access-hero"><div><p class="access-eyebrow">Librería / Arqueos</p><h1 class="mt-2 text-2xl font-semibold text-brand-paper">Arqueo #{{ $record->id }} · {{ $record->session->register->codigo }}</h1><p class="mt-2 text-sm text-brand-paper/65">Sesión #{{ $record->sesion_id }} · {{ $record->session->cerrado_at->setTimezone(config('cash.timezone'))->format('d/m/Y H:i') }}</p></div><flux:button :href="route('libreria.cajas.index')" icon="arrow-left" wire:navigate>Volver a cajas</flux:button></div></header>
-        @if (session('status'))<flux:callout variant="success">{{ session('status') }}</flux:callout>@endif
-        @if ($errors->any())<flux:callout variant="danger"><ul class="list-disc ps-4">@foreach ($errors->all() as $message)<li>{{ $message }}</li>@endforeach</ul></flux:callout>@endif
+        @if ($errors->any())
+            <x-catalog-notice name="reconciliation-feedback" title="No se pudo completar la operación" kind="error" :automatic="true">
+                <ul class="list-disc space-y-2 ps-4">@foreach ($errors->all() as $message)<li>{{ $message }}</li>@endforeach</ul>
+            </x-catalog-notice>
+        @elseif (session('status'))
+            <x-catalog-notice name="reconciliation-feedback" title="Información del arqueo" kind="success" :automatic="true">{{ session('status') }}</x-catalog-notice>
+        @endif
         @if ($incidents->isNotEmpty())
             <flux:callout variant="warning"><flux:callout.heading>Incidencias posteriores al cierre</flux:callout.heading><flux:callout.text>El arqueo conserva sus importes originales. Las invalidaciones de DTE y anulaciones de recibos no registran una devolución automática de dinero.</flux:callout.text><ul class="mt-3 space-y-1 text-xs">@foreach ($incidents as $incident)<li class="break-all font-mono">{{ $incident->numero_control }}</li>@endforeach</ul></flux:callout>
         @endif

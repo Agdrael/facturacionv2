@@ -1,6 +1,7 @@
 export function createGenerationState() {
     return {
         requestKey: null, generating: false, quoteLoading: false, generated: null,
+        paymentExcess: null, paymentApproval: null,
         quotedTotal: null, quotedSnapshot: '', historyLoading: false, historyError: '', generationNotice: '',
         invalidationLoading: false, invalidating: false,
         invalidation: { number: '', reasonTypes: [], identityDocuments: [], event: null, storeUrl: null },
@@ -60,10 +61,23 @@ export function createGenerationState() {
         async generateSale() {
             if (this.generating || this.generated || this.quoteLoading || this.packageAdding || !this.items.length || !this.hasBillingClient) return;
             if (this.requireFiscalClientChange()) return;
+            const draft = { ...this.generationBase(), total: (this.total / 100).toFixed(2),
+                payments: this.payments.map(payment => ({ method: payment.method, amount: String(payment.amount || '0'), reference: payment.reference || null })) };
+            const snapshot = JSON.stringify(draft);
+            if (this.paid > this.total) {
+                if (this.paid - this.total > this.cashPaid) {
+                    this.showGenerationNotice('El excedente solo puede devolverse del efectivo recibido. Revisa los medios de pago.');
+                    return;
+                }
+                if (this.paymentApproval !== snapshot) {
+                    this.paymentExcess = { snapshot, total: this.total, paid: this.paid, change: this.paid - this.total };
+                    this.$flux.modal('sale-payment-excess').show();
+                    return;
+                }
+            }
             this.generating = true;
             this.requestKey ||= globalThis.crypto.randomUUID();
-            const payload = { ...this.generationBase(), requestKey: this.requestKey, total: (this.total / 100).toFixed(2),
-                payments: this.payments.map(payment => ({ method: payment.method, amount: String(payment.amount || '0'), reference: payment.reference || null })) };
+            const payload = { ...draft, requestKey: this.requestKey };
             try {
                 this.generated = await this.postGeneration(this.saleCatalogs.generateUrl, payload);
                 this.$flux.modal('sale-payment').close();
@@ -73,6 +87,20 @@ export function createGenerationState() {
             } finally {
                 this.generating = false;
             }
+        },
+
+        confirmExcessPayment() {
+            if (!this.paymentExcess || this.generating) return;
+            this.paymentApproval = this.paymentExcess.snapshot;
+            this.paymentExcess = null;
+            this.$flux.modal('sale-payment-excess').close();
+            return this.generateSale();
+        },
+
+        cancelExcessPayment() {
+            this.paymentExcess = null;
+            this.paymentApproval = null;
+            this.$flux.modal('sale-payment-excess').close();
         },
 
         finishSale(printCopy = false) {

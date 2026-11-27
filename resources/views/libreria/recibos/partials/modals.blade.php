@@ -12,6 +12,15 @@
         <div class="flex items-center justify-end gap-3"><flux:button size="xs" x-on:click="loadLookup(lookupPage - 1)" x-bind:disabled="lookupLoading || lookupPage <= 1">Anterior</flux:button><span class="text-xs text-zinc-500" x-text="`${lookupPage} / ${lookupPages}`"></span><flux:button size="xs" x-on:click="loadLookup(lookupPage + 1)" x-bind:disabled="lookupLoading || lookupPage >= lookupPages">Siguiente</flux:button></div>
     </div>
 </flux:modal>
+<x-catalog-notice name="receipt-payment-excess" title="Confirma el monto recibido">
+    <p>El monto recibido supera el total del recibo. Revisa el pago y el cambio antes de emitir.</p>
+    <dl class="mt-4 space-y-2 tabular-nums">
+        <div class="flex justify-between gap-4"><dt>Total a pagar</dt><dd class="font-semibold" x-text="money(paymentExcess?.total || 0)"></dd></div>
+        <div class="flex justify-between gap-4"><dt>Monto recibido</dt><dd class="font-semibold" x-text="money(paymentExcess?.paid || 0)"></dd></div>
+        <div class="flex justify-between gap-4"><dt>Cambio en efectivo</dt><dd class="font-semibold" x-text="money(paymentExcess?.change || 0)"></dd></div>
+    </dl>
+    <x-slot:actions><div class="flex flex-wrap justify-end gap-3"><flux:button type="button" x-on:click="cancelExcessPayment()">Revisar pago</flux:button><flux:button type="button" variant="primary" x-on:click="confirmExcessPayment()" x-bind:disabled="busy">Confirmar y emitir</flux:button></div></x-slot:actions>
+</x-catalog-notice>
 <flux:modal name="receipt-copy" data-theme="light" class="w-full max-w-lg"><div class="space-y-4"><flux:heading size="lg">Recibo registrado</flux:heading><p class="font-mono text-sm font-semibold" x-text="completed?.number"></p><p class="text-sm" x-text="completed?.recipient"></p><p class="text-xs text-zinc-500" x-text="statusLabel(completed?.status)"></p><template x-for="error in completed?.errors || []" :key="error"><p class="text-xs text-amber-700" x-text="error"></p></template><p x-show="notice" class="text-xs text-amber-700" x-text="notice"></p><p class="text-sm">¿Deseas una copia del comprobante?</p><div class="flex justify-end gap-3"><flux:button x-on:click="finish()">No, continuar</flux:button><flux:button variant="primary" x-show="options.canPrint" x-on:click="finish(true)">Sí, abrir copia</flux:button></div></div></flux:modal>
 <flux:modal name="receipt-reset" data-theme="light" class="w-full max-w-md"><div class="space-y-4"><flux:heading size="lg">Nuevo recibo</flux:heading><p class="text-sm">Se limpiarán los datos de la operación que estás preparando.</p><div class="flex justify-end gap-3"><flux:modal.close><flux:button>Volver</flux:button></flux:modal.close><flux:button variant="primary" x-on:click="reset()" x-bind:disabled="locked">Limpiar formulario</flux:button></div></div></flux:modal>
 <flux:modal name="receipt-history" data-theme="light" variant="flyout" class="w-full md:w-[52rem]">

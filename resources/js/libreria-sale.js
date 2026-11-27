@@ -575,6 +575,8 @@ export function createSaleWorkspace(options = {}) {
             if (this.generating || this.quoteLoading) return;
             this.generated = null;
             this.requestKey = null;
+            this.paymentExcess = null;
+            this.paymentApproval = null;
             this.quotedTotal = null;
             this.quotedSnapshot = '';
             ++this.packageRequestSequence;

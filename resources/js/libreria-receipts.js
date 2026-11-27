@@ -4,6 +4,7 @@ export function createReceiptWorkspace(options = {}) {
         account: '', amount: '', observation: '', payments: [{ uid: 1, method: options.methods?.[0]?.codigo || '01', amount: '', reference: '' }] });
     return {
         options, mode: 'catalog', form: blank(), sequence: 1, busy: false, notice: '', requestKey: null, submittedPayload: null, completed: null,
+        paymentExcess: null, paymentApproval: null,
         selection: null, selecting: false, selectionSequence: 0, invoices: [], invoiceQuery: '', invoiceChoice: '', academicItems: [],
         lookupKind: 'clients', lookupQuery: '', lookupYear: '', lookupFunding: 'normal', lookupRows: [], lookupPage: 1, lookupPages: 1, lookupLoading: false, lookupSequence: 0,
         history: [], historyLoading: false, historyQuery: '', historyLegacy: false, historyPage: 1, historyPages: 1, historySequence: 0,
@@ -39,12 +40,14 @@ export function createReceiptWorkspace(options = {}) {
         setMode(mode) {
             if (this.locked || this.selecting) return;
             this.mode = mode; this.form = blank(); this.selection = null; this.academicItems = []; this.invoices = []; this.invoiceChoice = ''; this.invoiceQuery = ''; this.notice = '';
+            this.paymentExcess = null; this.paymentApproval = null;
             if (mode !== 'catalog') this.openLookup(mode);
         },
         reset() {
             if (this.busy || this.submittedPayload || this.completed) return;
             this.selectionSequence++; this.selecting = false; this.mode = 'catalog'; this.form = blank(); this.selection = null;
             this.academicItems = []; this.invoices = []; this.invoiceChoice = ''; this.invoiceQuery = ''; this.requestKey = null; this.notice = '';
+            this.paymentExcess = null; this.paymentApproval = null;
             this.$flux.modal('receipt-reset').close();
         },
         async openLookup(kind) {
@@ -168,6 +171,12 @@ export function createReceiptWorkspace(options = {}) {
                 if (this.mode === 'academic_cxc' && ((!this.form.sourceId && !this.academicItems.length) || (this.form.sourceId && !this.academicReady()))) return;
                 if (this.academicItems.some(row => this.cents(row.amount) <= 0 || this.cents(row.amount) > this.cents(row.remaining))) { this.notice = 'Revisa los abonos: deben ser mayores que cero y no superar el saldo de cada cuota.'; return; }
                 if (this.total <= 0 || this.paid < this.total || this.change > this.cash) { this.notice = 'Completa el pago. El cambio solo puede devolverse del efectivo recibido.'; return; }
+                const snapshot = JSON.stringify({ ...this.payload(), requestKey: null });
+                if (this.change > 0 && this.paymentApproval !== snapshot) {
+                    this.paymentExcess = { snapshot, total: this.total, paid: this.paid, change: this.change };
+                    this.$flux.modal('receipt-payment-excess').show();
+                    return;
+                }
             }
             this.requestKey ||= crypto.randomUUID(); this.submittedPayload ||= this.payload(); this.busy = true; this.notice = '';
             try { this.completed = await this.api(options.storeUrl, this.submittedPayload); this.$flux.modal('receipt-copy').show(); }
@@ -176,6 +185,16 @@ export function createReceiptWorkspace(options = {}) {
                 if (error.status >= 400 && error.status < 500) { this.submittedPayload = null; this.requestKey = null; }
                 else this.notice += ' Conservamos la solicitud para reintentar sin duplicar el cobro.';
             } finally { this.busy = false; }
+        },
+        confirmExcessPayment() {
+            if (!this.paymentExcess || this.busy) return;
+            this.paymentApproval = this.paymentExcess.snapshot; this.paymentExcess = null;
+            this.$flux.modal('receipt-payment-excess').close();
+            return this.issue();
+        },
+        cancelExcessPayment() {
+            this.paymentExcess = null; this.paymentApproval = null;
+            this.$flux.modal('receipt-payment-excess').close();
         },
         finish(copy = false) {
             if (this.busy || !this.completed) return;

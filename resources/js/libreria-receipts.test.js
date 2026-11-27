@@ -19,6 +19,57 @@ function normal(state) {
     state.exact();
 }
 
+test('receipt excess requires approval and changed payments require another confirmation before one submission', async () => {
+    const state = workspace(); normal(state);
+    let calls = 0; const shown = [];
+    state.$flux = { modal: name => ({ show() { shown.push(name); }, close() {} }) };
+    state.api = async () => { calls++; return { id: 9 }; };
+    state.form.payments = [{ uid: 1, method: '01', amount: '8.00' }, { uid: 2, method: '02', amount: '4.00' }];
+    await state.issue();
+    assert.equal(calls, 0);
+    assert.equal(state.submittedPayload, null);
+    assert.equal(state.requestKey, null);
+    assert.deepEqual(shown, ['receipt-payment-excess']);
+    assert.deepEqual([state.paymentExcess.total, state.paymentExcess.paid, state.paymentExcess.change], [1000, 1200, 200]);
+    state.cancelExcessPayment();
+    assert.equal(state.paymentExcess, null);
+    assert.equal(state.form.payments[0].amount, '8.00');
+    await state.issue();
+    state.form.payments[0].amount = '9.00';
+    await state.confirmExcessPayment();
+    assert.equal(calls, 0);
+    assert.equal(state.paymentExcess.change, 300);
+    await state.confirmExcessPayment();
+    await state.confirmExcessPayment();
+    assert.equal(calls, 1);
+    assert.equal(state.completed.id, 9);
+});
+
+test('approved receipt excess preserves its frozen request on retry and a cent of excess still needs approval', async () => {
+    const state = workspace(); normal(state); const requests = [];
+    state.api = async (url, body) => { requests.push(structuredClone(body)); throw new Error('Sin respuesta'); };
+    state.form.payments[0].amount = '10.01';
+    await state.issue();
+    assert.equal(requests.length, 0);
+    assert.equal(state.paymentExcess.change, 1);
+    await state.confirmExcessPayment();
+    state.form.payments[0].amount = '999';
+    await state.issue();
+    assert.equal(requests.length, 2);
+    assert.deepEqual(requests[0], requests[1]);
+    assert.equal(requests[1].payments[0].amount, '10.01');
+});
+
+test('noncash receipt overpayment is rejected instead of offering confirmation', async () => {
+    const state = workspace(); normal(state); let calls = 0;
+    state.api = async () => { calls++; return { id: 9 }; };
+    state.form.payments = [{ uid: 1, method: '02', amount: '11.00' }];
+    await state.issue();
+    assert.equal(calls, 0);
+    assert.equal(state.paymentExcess, null);
+    assert.match(state.notice, /efectivo/);
+});
+
 test('one operation retains one concept and several payment methods with cash-only change', () => {
     const state = workspace();
     normal(state);
