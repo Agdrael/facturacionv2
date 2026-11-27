@@ -81,6 +81,8 @@ test('generated invoices provide a private printable PDF ticket with the origina
     expect($ticket->getContent())->toStartWith('%PDF-');
     $row = DB::table('libreria.venta_dtes')->first();
     $document = json_decode($row->documento, true);
+    $header = view('libreria.ticket', ['document' => $document, 'journal' => $row, 'payments' => json_decode($row->pagos, true)])->fragment('header');
+    expect($header)->toContain('N.º DTE:', $document['identificacion']['numeroControl'], 'Fecha de emisión:', '11/11/2026');
     $url = app(SaleTicketService::class)->consultationUrl($document);
     parse_str(parse_url($url, PHP_URL_QUERY), $query);
     expect($query)->toBe(['ambiente' => $document['identificacion']['ambiente'], 'codGen' => $result->json('uuid'), 'fechaEmi' => '2026-11-11']);

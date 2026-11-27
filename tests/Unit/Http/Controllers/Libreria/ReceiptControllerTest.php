@@ -44,10 +44,11 @@ test('retreats and sacraments require a real student even when issued by a direc
     Http::assertNothingSent();
 })->with(['RETIROS UN DIA', 'RETIRO DE PROMOCION', 'CONFIRMA', 'CUOTAS 1° COMUNION COLECTIVAS', 'Primera Comunión']);
 
-test('student references remain historical searchable metadata without changing the payer ticket or academic balances', function () {
+test('student references retain enrollment and payer details on reprinted tickets without changing academic balances', function () {
     $user = prepareReceipts($this);
     DB::table('public.catalogo_recibos')->insert(['id' => 4, 'nombre_recibo' => 'RETIRO DE CONFIRMA', 'cuenta_abono' => '5101', 'precio' => 10]);
     $platform = DB::connection('plataforma');
+    $platform->table('public.student_enrollment')->where('student_id', 501)->update(['seccion' => 'B']);
     $platform->table('public.saldo_pagos')->insert(['id_saldo' => 9, 'student_id' => '501', 'syear' => 2025, 'mes' => 9,
         'cuota' => 100, 'pago' => 10, 'saldo' => 90, 'cuota_beca' => 20, 'pago_beca' => 5, 'saldo_beca' => 15,
         'cuota_bienhechor' => 30, 'pago_bienhechor' => 10, 'saldo_bienhechor' => 20]);
@@ -71,14 +72,18 @@ test('student references remain historical searchable metadata without changing 
     $this->assertDatabaseHas('public.recibos', ['numero_carnet' => '501', 'nombre_cliente' => 'Destinatario de prueba',
         'cuenta_abono' => '5101', 'precio' => 10], 'receipt_legacy');
     $platform->table('public.students')->where('student_id', 501)->update(['first_name' => 'Nombre cambiado']);
+    $platform->table('public.student_enrollment')->where('student_id', 501)->update(['seccion' => 'C']);
+    $platform->table('public.school_gradelevels')->where('id', 1)->update(['title' => 'Grado cambiado']);
     foreach (['501', 'ALUMNO UNO', 'Destinatario'] as $search) {
         $this->getJson(route('libreria.recibos.history', ['q' => $search]))->assertOk()
             ->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', $receipt->id)
             ->assertJsonPath('data.0.student', ['id' => '501', 'name' => 'Alumno Uno']);
     }
     $document = app(ReceiptTicketService::class)->document($receipt);
+    expect($document['students'])->toBe([['id' => '501', 'name' => 'Alumno Uno', 'year' => 2025, 'grade' => '1°', 'section' => 'B']]);
     $html = view('libreria.recibos.ticket', ['receipt' => $document, 'emitter' => (object) $document['issuer']])->render();
-    expect($html)->toContain('Destinatario de prueba')->not->toContain('Alumno Uno');
+    expect($html)->toContain('Destinatario de prueba', 'Alumno Uno', 'Carnet:', 'Grado:', 'Sección:', '1°', '> B</p>')->not->toContain('Grado cambiado', 'Nombre cambiado');
+    $this->get($response->json('ticketUrl'))->assertOk()->assertHeader('Content-Type', 'application/pdf');
     $other = User::factory()->create();
     DB::table('libreria.receipts')->where('id', $receipt->id)->update(['user_id' => $other->id]);
     $user->roles()->sync(Role::query()->where('code', 'libreria')->pluck('id'));
@@ -601,6 +606,16 @@ test('a uniquely verified academic invoice is selected inside the form and colle
     $result = $this->postJson(route('libreria.recibos.store'), $input)->assertCreated()->assertJsonPath('status', 'EMITIDO');
     $this->assertDatabaseHas('libreria.receipt_obligations', ['linked_by' => auth()->id(), 'source_key' => 'academic:'.$debt['id'].':normal', 'remaining' => 30]);
     $this->assertDatabaseHas('public.cxc', ['id' => $debt['id'], 'parciales' => 30], 'plataforma');
+    $document = app(ReceiptTicketService::class)->document(Receipt::query()->findOrFail($result->json('id')));
+    expect($document['students'][0])->toBe(['id' => '501', 'name' => 'Alumno Uno', 'year' => 2025, 'grade' => '1°', 'section' => null]);
+    expect(view('libreria.recibos.ticket', ['receipt' => $document, 'emitter' => (object) $document['issuer']])->render())->toContain('No disponible');
+    $line = DB::table('libreria.receipt_lines')->where('receipt_id', $result->json('id'))->sole();
+    $data = json_decode($line->data, true, 512, JSON_THROW_ON_ERROR);
+    unset($data['student']);
+    DB::table('libreria.receipt_lines')->where('id', $line->id)->update(['data' => json_encode($data, JSON_THROW_ON_ERROR)]);
+    DB::connection('plataforma')->table('public.student_enrollment')->where('student_id', 501)->update(['seccion' => 'C']);
+    $older = app(ReceiptTicketService::class)->document(Receipt::query()->findOrFail($result->json('id')));
+    expect($older['students'])->toBe([['id' => '501', 'name' => 'Alumno Uno', 'year' => 2025, 'grade' => '1°', 'section' => 'C']]);
     $this->get($result->json('ticketUrl'))->assertOk();
 });
 

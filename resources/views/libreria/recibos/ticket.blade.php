@@ -17,6 +17,11 @@
 @if ($receipt['payer'])<p class="small"><strong>Recibido de:</strong> {{ $receipt['payer'] }}</p>@endif
 @if ($receipt['document'] ?? null)<p class="small"><strong>Documento:</strong> {{ $receipt['document'] }}</p>@endif
 @if ($receipt['email'])<p class="small">{{ $receipt['email'] }}</p>@endif
+@foreach ($receipt['students'] ?? [] as $student)
+<p><strong>Alumno:</strong> {{ $student['name'] ?: $student['id'] }}</p>
+<p class="small"><strong>Carnet:</strong> {{ $student['id'] }} · <strong>Año académico:</strong> {{ $student['year'] }}</p>
+<p class="small"><strong>Grado:</strong> {{ $student['grade'] ?: 'No disponible' }} · <strong>Sección:</strong> {{ $student['section'] ?: 'No disponible' }}</p>
+@endforeach
 <table width="100%" cellpadding="3">
     <thead><tr><th width="70%">Descripción</th><th width="30%" align="right">Importe</th></tr></thead>
     <tbody>

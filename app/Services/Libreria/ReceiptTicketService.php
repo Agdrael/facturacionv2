@@ -8,6 +8,8 @@ use TCPDF;
 
 class ReceiptTicketService
 {
+    public function __construct(private ReceiptSourceService $sources) {}
+
     /** @param list<array<string, mixed>> $receipts */
     public function render(array $receipts): string
     {
@@ -35,8 +37,22 @@ class ReceiptTicketService
         $lines = DB::table('libreria.receipt_lines')->where('receipt_id', $receipt->id)->orderBy('id')->get();
         $payments = DB::table('libreria.receipt_payments')->where('receipt_id', $receipt->id)->orderBy('id')->get();
         $batch = DB::table('libreria.receipt_batches')->where('id', $receipt->batch_id)->firstOrFail();
+        $students = [];
+        foreach ($lines as $line) {
+            $data = json_decode($line->data, true, 512, JSON_THROW_ON_ERROR);
+            $id = $data['student']['id'] ?? $data['history_student']['id'] ?? $data['student_id'] ?? ($receipt->recipient_type === 'alumno' ? $receipt->recipient_id : null);
+            if ($id === null) {
+                continue;
+            }
+            $key = $id.':'.($data['student']['year'] ?? $data['year'] ?? '');
+            if (! isset($students[$key])) {
+                $students[$key] = $data['student'] ?? $this->sources->studentForReceipt((string) $id, $data['year'] ?? null);
+                $students[$key]['name'] = $data['student']['name'] ?? $data['history_student']['name'] ?? $students[$key]['name'];
+            }
+        }
 
         return ['number' => $receipt->number(), 'date' => $receipt->created_at->setTimezone('America/El_Salvador')->format('d/m/Y H:i'),
+            'students' => array_values($students),
             'recipient' => $receipt->recipient_name, 'payer' => $receipt->payer_name, 'email' => $receipt->payer_email, 'register' => $receipt->register,
             'document' => $lines->isEmpty() ? null : (json_decode($lines->first()->data, true, 512, JSON_THROW_ON_ERROR)['recipient_document'] ?? null),
             'operator' => $receipt->operator_name, 'status' => $receipt->status, 'annulled' => $receipt->annulled_at !== null,

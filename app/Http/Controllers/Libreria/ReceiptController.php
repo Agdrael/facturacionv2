@@ -291,6 +291,7 @@ class ReceiptController extends Controller
         }
         abort_unless($request->user()->can('libreria.recibos.ver_todos') || $row->numero_caja === (string) $request->user()->getAttribute('puntoventa'), 403);
         $document = ['number' => 'Anterior #'.$row->id, 'date' => $row->fecha, 'recipient' => $row->nombre_cliente,
+            'students' => empty($row->numero_carnet) ? [] : [$sources->studentForReceipt((string) $row->numero_carnet)],
             'payer' => null, 'email' => null, 'register' => $row->numero_caja, 'operator' => 'Sistema anterior', 'status' => $row->anulado ? 'ANULADO' : 'HISTORICO',
             'annulled' => (bool) $row->anulado, 'observation' => $row->observacion, 'total' => $row->precio, 'paid' => $row->precio, 'change' => '0', 'test' => false,
             'lines' => [['name' => $row->codigo_recibo, 'amount' => $row->precio, 'invoice' => null, 'funding' => null]],

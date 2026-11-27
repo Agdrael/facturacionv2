@@ -11,6 +11,8 @@ use stdClass;
 
 class ReceiptSourceService
 {
+    public function __construct(private TuitionService $tuition) {}
+
     public function legacy(): Connection
     {
         return DB::connection(config('receipts.legacy_connection'));
@@ -19,6 +21,19 @@ class ReceiptSourceService
     public function platform(): Connection
     {
         return DB::connection(config('receipts.platform_connection'));
+    }
+
+    /** @return array{id: string, name: string, year: int, grade: ?string, section: ?string} */
+    public function studentForReceipt(string $id, ?int $year = null): array
+    {
+        $year ??= $this->tuition->schoolYear();
+        $student = $this->platform()->table('public.students')->where('student_id', $id)->first(['first_name', 'middle_name', 'last_name']);
+        $enrollment = $this->platform()->table('public.student_enrollment as e')->leftJoin('public.school_gradelevels as g', 'g.id', '=', 'e.grade_id')
+            ->where('e.student_id', $id)->where('e.syear', $year)->get(['g.title', 'e.seccion']);
+        $row = $enrollment->count() === 1 ? $enrollment->first() : null;
+
+        return ['id' => $id, 'name' => trim(implode(' ', array_filter([$student->first_name ?? '', $student->middle_name ?? '', $student->last_name ?? '']))),
+            'year' => $year, 'grade' => $row?->title, 'section' => $row?->seccion];
     }
 
     /** @return list<array{id: int, name: string, price: string, account: ?string, kind: string, requiresAccount: bool, requiresStudent: bool}> */

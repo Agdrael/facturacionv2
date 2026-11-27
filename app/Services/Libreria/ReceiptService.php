@@ -89,11 +89,18 @@ class ReceiptService
                 $details = [$this->line($recipient, $line, $total)];
             }
             $this->account(config('receipts.cash_account'));
+            $students = [];
             foreach ($details as &$detail) {
                 $this->account($detail['data']['account']);
                 $detail['data']['cash_account'] = config('receipts.cash_account');
                 $detail['data']['recipient_document'] = $input['recipient']['document'] ?? null;
                 $detail['data']['recipient_document_type'] = $input['recipient']['documentType'] ?? null;
+                $studentId = $detail['data']['history_student']['id'] ?? $detail['data']['student_id'] ?? ($recipient['type'] === 'alumno' ? $recipient['id'] : null);
+                if ($studentId !== null) {
+                    $key = $studentId.':'.($detail['data']['year'] ?? '');
+                    $students[$key] ??= $this->sources->studentForReceipt((string) $studentId, $detail['data']['year'] ?? null);
+                    $detail['data']['student'] = $students[$key];
+                }
             }
             unset($detail);
             $requestId = DB::table('libreria.receipt_batches')->insertGetId(['request_key' => $input['requestKey'], 'request_hash' => $hash,

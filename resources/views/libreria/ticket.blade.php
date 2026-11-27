@@ -24,6 +24,8 @@
 <h2>{{ $id['tipoDte'] === '03' ? 'COMPROBANTE DE CRÉDITO FISCAL' : 'FACTURA' }} ELECTRÓNICA</h2>
 @if ($id['ambiente'] !== '01')<p class="center"><strong>AMBIENTE DE PRUEBAS</strong></p>@endif
 @if ($journal->anulado ?? false)<h2>DOCUMENTO ANULADO</h2>@endif
+<p class="center small"><strong>N.º DTE:</strong><br>{{ $id['numeroControl'] }}</p>
+<p class="center small"><strong>Fecha de emisión:</strong> {{ \Carbon\CarbonImmutable::parse($id['fecEmi'])->format('d/m/Y') }} {{ $id['horEmi'] ?? '' }}</p>
 @endfragment
 @fragment('detail')
 <table width="100%" cellpadding="2">
