@@ -38,7 +38,9 @@ class SaleCalculationService
                     throw ValidationException::withMessages(['items.'.$index => 'La cuota cambió o ya no está disponible. Vuelve a seleccionarla.']);
                 }
                 $academic = [...$academic, 'schoolYear' => $fee['schoolYear'], 'month' => $fee['month']];
-                $this->credits->assertAcademicNotBilled($academic['studentId'], (int) $academic['schoolYear'], (int) $academic['month'], $academic['fundingType']);
+                if ($academic['fundingType'] === 'normal') {
+                    $this->credits->assertAcademicNotBilled($academic['studentId'], (int) $academic['schoolYear'], (int) $academic['month'], $academic['fundingType']);
+                }
                 $key = 'fee:'.$academic['balanceId'].':'.$academic['fundingType'].':'.$academic['schoolYear'];
                 if (DB::table('libreria.venta_cuotas')->where('saldo_id', $academic['balanceId'])->where('financiamiento', $academic['fundingType'])->where('anio', $academic['schoolYear'])->where('ambiente', config('services.factec.environment', '00'))->where('reserva_activa', true)->exists()) {
                     throw ValidationException::withMessages(['items.'.$index => 'Esta cuota ya está vinculada a un DTE generado.']);

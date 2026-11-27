@@ -15,7 +15,7 @@ uses(TestCase::class);
 beforeEach(function () {
     config(['database.default' => 'sqlite', 'database.connections.sqlite' => ['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => '', 'foreign_key_constraints' => false],
         'database.connections.dtesantacecilia' => ['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => ''],
-        'services.factec.transmission_enabled' => false]);
+        'services.factec.transmission_enabled' => false, 'receipts.enabled' => false]);
     Http::preventStrayRequests();
     DB::purge('sqlite');
     DB::purge('dtesantacecilia');
@@ -271,6 +271,38 @@ test('different students and funding types share one DTE using authoritative bal
     $this->postJson(route('libreria.ventas.store'), $input)->assertUnprocessable()->assertJsonValidationErrors('items.0');
     $this->assertDatabaseCount('libreria.ventas', 1);
 });
+
+test('scholarship and sponsor sales ignore family CXC but still reserve their own quota once', function (string $funding) {
+    prepareDteGeneration($this);
+    prepareAcademicGeneration();
+    config(['receipts.enabled' => true, 'receipts.legacy_connection' => 'sqlite']);
+    (require __DIR__.'/../../../../../database/migrations/2026_11_20_161442_create_receipt_control_tables.php')->up();
+    $platform = DB::connection('plataforma');
+    $platform->statement("ATTACH DATABASE ':memory:' AS public");
+    $platform->statement('CREATE TABLE public.cxc (id INTEGER PRIMARY KEY, student_id TEXT, syear INTEGER, item_pago TEXT, monto NUMERIC, parciales NUMERIC, facturado BOOLEAN)');
+    $platform->statement('CREATE TABLE public.detalle_pagos (id_detalle INTEGER PRIMARY KEY, student_id TEXT, syear INTEGER, mes_pagado INTEGER, monto NUMERIC, uid_dte TEXT, numero_dte TEXT, facturado BOOLEAN, lugar TEXT, estado TEXT, pago_beca BOOLEAN, pago_bienhechor BOOLEAN)');
+    $platform->table('public.cxc')->insert(['id' => 1, 'student_id' => '102', 'syear' => 2025, 'item_pago' => '11', 'monto' => 50, 'parciales' => 50, 'facturado' => true]);
+    if ($funding === 'bienhechor') {
+        $platform->table('saldo_pagos')->where('id_saldo', 102)->update(['cuota_bienhechor' => 25, 'pago_bienhechor' => 0, 'saldo_bienhechor' => 25]);
+        DB::table('libreria.servicios_academicos')->insert(['grado_id' => 1, 'especialidad' => '', 'financiamiento' => 'bienhechor', 'concepto' => 'colegiatura', 'producto_id' => 2]);
+    }
+    $input = dteSalePayload();
+    $input['items'] = [['productId' => 2, 'quantity' => '1', 'discount' => 0, 'tuition' => [
+        'studentId' => '102', 'balanceId' => '102', 'fundingType' => $funding, 'responsibleType' => $funding]]];
+    $input['total'] = '25.00';
+    $input['payments'][0]['amount'] = '25';
+
+    $this->postJson(route('libreria.ventas.store'), $input)->assertCreated();
+
+    $this->assertDatabaseHas('libreria.venta_cuotas', ['carnet_estudiante' => '102', 'financiamiento' => $funding, 'monto' => 25, 'reserva_activa' => true]);
+    $this->assertDatabaseHas('public.cxc', ['id' => 1, 'monto' => 50, 'parciales' => 50], 'plataforma');
+    $this->assertDatabaseHas('saldo_pagos', ['id_saldo' => 102, 'pago' => 0, 'saldo' => 50], 'plataforma');
+    $input['requestKey'] = '91d32456-e927-46f1-ad24-0d9c9fa4871f';
+    $this->postJson(route('libreria.ventas.store'), $input)->assertUnprocessable()->assertJsonValidationErrors('items.0')
+        ->assertJsonFragment(['items.0' => ['Esta cuota ya está vinculada a un DTE generado.']]);
+    $this->assertDatabaseCount('libreria.ventas', 1);
+    Http::assertNothingSent();
+})->with(['beca', 'bienhechor']);
 
 test('academic generation remains blocked while its platform payment timing is undecided', function () {
     prepareDteGeneration($this);
