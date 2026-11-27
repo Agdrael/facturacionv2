@@ -150,8 +150,12 @@ class ReceiptController extends Controller
         $page = $query->orderByDesc('c.syear')->orderBy('c.student_id')->orderBy('c.item_pago')->paginate(20, ['c.*', 's.first_name', 's.middle_name', 's.last_name', 'b.'.$balanceColumn.' as funding_remaining']);
         $keys = $page->getCollection()->map(fn ($row) => 'academic:'.$row->id.':'.$data['funding'])->all();
         $obligations = DB::table('libreria.receipt_obligations')->whereIn('source_key', $keys)->get()->keyBy('source_key');
+        $searchStudent = trim($data['q'] ?? '');
+        $diagnosticReference = ctype_digit($searchStudent) && $page->currentPage() === 1
+            ? $sources->logAcademicSearch($searchStudent, $data['funding'], isset($data['year']) ? (int) $data['year'] : null, $page->total(), (int) $request->user()->id)
+            : null;
 
-        return response()->json(['page' => $page->currentPage(), 'pages' => $page->lastPage(), 'data' => $page->getCollection()->map(function ($row) use ($obligations, $data): array {
+        return response()->json(['page' => $page->currentPage(), 'pages' => $page->lastPage(), 'diagnosticReference' => $diagnosticReference, 'data' => $page->getCollection()->map(function ($row) use ($obligations, $data): array {
             $key = 'academic:'.$row->id.':'.$data['funding'];
             $obligation = $obligations->get($key);
             $remaining = ReceiptMoney::decimal(min(ReceiptMoney::cents($row->parciales ?? $row->monto), ReceiptMoney::cents($row->funding_remaining)));

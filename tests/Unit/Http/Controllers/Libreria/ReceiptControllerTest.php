@@ -575,6 +575,73 @@ test('a receipt accepts only one concept or invoice and fixed account types cann
     $this->get($result->json('ticketUrl'))->assertOk();
 });
 
+test('academic CXC searches log every exclusion without changing balances or the visible result', function (string $funding, string $column) {
+    $user = prepareReceipts($this);
+    $platform = DB::connection('plataforma');
+    foreach (range(2, 8) as $month) {
+        $year = $month === 7 ? 2024 : 2025;
+        $platform->table('public.cxc')->insert(['id' => $month, 'student_id' => '501', 'syear' => $year, 'item_pago' => str_pad((string) $month, 2, '0', STR_PAD_LEFT),
+            'facturado' => $month !== 2, 'recibo' => $month === 3, 'monto' => 50, 'parciales' => $month === 8 ? null : ($month === 4 ? 0 : 50)]);
+        if ($month !== 6) {
+            $balance = ['id_saldo' => $month, 'student_id' => '501', 'syear' => $year, 'mes' => $month, 'saldo' => 50, 'saldo_beca' => 50, 'saldo_bienhechor' => 50];
+            if ($month === 5) {
+                $balance[$column] = 0;
+            }
+            $platform->table('public.saldo_pagos')->insert($balance);
+        }
+    }
+    $originalCxc = $platform->table('public.cxc')->get()->all();
+    $originalBalances = $platform->table('public.saldo_pagos')->get()->all();
+    Log::spy();
+
+    $response = $this->getJson(route('libreria.recibos.cxc', ['q' => '501', 'year' => 2025, 'funding' => $funding]))
+        ->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.cxcId', 8);
+
+    $reference = $response->json('diagnosticReference');
+    expect($reference)->toBeUuid();
+    $diagnostic = [];
+    Log::shouldHaveReceived('info')->once()->with('CXC_ALUMNO_BUSQUEDA', Mockery::on(function (array $context) use (&$diagnostic): bool {
+        $diagnostic = $context;
+
+        return true;
+    }));
+    expect($diagnostic)->toMatchArray(['reference' => $reference, 'user_id' => $user->id, 'student_id' => '501', 'requested_year' => 2025,
+        'funding' => $funding, 'balance_column' => $column, 'visible_results' => 1, 'student_exists' => true, 'cxc_rows_truncated' => false]);
+    $rows = collect($diagnostic['cxc_rows'])->keyBy('id');
+    foreach ([2 => 'NO_FACTURADA', 3 => 'RECIBO_PAGADO', 4 => 'SIN_SALDO_CXC', 5 => 'SIN_SALDO_FINANCIAMIENTO', 6 => 'SIN_SALDO_PAGOS', 7 => 'ANIO_FILTRADO'] as $id => $code) {
+        expect($rows[$id]['included_by_filters'])->toBeFalse();
+        expect($rows[$id]['exclusion_reasons'][0])->toStartWith($code.':');
+    }
+    expect($rows[8])->toMatchArray(['included_by_filters' => true, 'exclusion_reasons' => [], 'matching_balance_ids' => [8], 'parciales' => null]);
+    expect($platform->table('public.cxc')->get()->all())->toEqual($originalCxc);
+    expect($platform->table('public.saldo_pagos')->get()->all())->toEqual($originalBalances);
+    Log::shouldNotHaveReceived('warning');
+    Http::assertNothingSent();
+})->with([['normal', 'saldo'], ['beca', 'saldo_beca'], ['bienhechor', 'saldo_bienhechor']]);
+
+test('academic CXC diagnostics distinguish missing debt and unknown students and skip names pagination and denied requests', function () {
+    prepareReceipts($this);
+    DB::connection('plataforma')->table('public.saldo_pagos')->insert(['id_saldo' => 1, 'student_id' => '501', 'syear' => 2025, 'mes' => 2, 'saldo' => 50]);
+    Log::spy();
+
+    $known = $this->getJson(route('libreria.recibos.cxc', ['q' => '501', 'funding' => 'normal']))->assertOk()->assertJsonCount(0, 'data');
+    $missing = $this->getJson(route('libreria.recibos.cxc', ['q' => '99999999', 'funding' => 'normal']))->assertOk()->assertJsonCount(0, 'data');
+    $this->getJson(route('libreria.recibos.cxc', ['q' => 'Alumno', 'funding' => 'normal']))->assertOk()->assertJsonPath('diagnosticReference', null);
+    $this->getJson(route('libreria.recibos.cxc', ['q' => '501', 'funding' => 'normal', 'page' => 2]))->assertOk()->assertJsonPath('diagnosticReference', null);
+    $this->actingAs(User::factory()->create());
+    $this->getJson(route('libreria.recibos.cxc', ['q' => '501', 'funding' => 'normal']))->assertForbidden();
+
+    Log::shouldHaveReceived('info')->twice();
+    Log::shouldHaveReceived('info')->with('CXC_ALUMNO_BUSQUEDA', Mockery::on(fn (array $context): bool => $context['reference'] === $known->json('diagnosticReference') && $context['student_exists'] === true && $context['cxc_rows'] === []
+        && str_starts_with($context['search_notes'][0], 'SIN_CXC:') && $context['balances'][0]['saldo'] === 50
+    ))->once();
+    Log::shouldHaveReceived('info')->with('CXC_ALUMNO_BUSQUEDA', Mockery::on(fn (array $context): bool => $context['reference'] === $missing->json('diagnosticReference') && $context['student_exists'] === false
+        && str_starts_with($context['search_notes'][1], 'ALUMNO_NO_ENCONTRADO:')
+    ))->once();
+    Log::shouldNotHaveReceived('warning');
+    Http::assertNothingSent();
+});
+
 test('the academic CXC browser searches pending invoices without treating zero as a debt', function () {
     prepareReceipts($this);
     receiptAcademicDebt('0.00', 2024);

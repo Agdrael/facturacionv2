@@ -5,9 +5,11 @@ namespace App\Services\Libreria;
 use App\Models\Libreria\Cliente;
 use Illuminate\Database\Connection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use stdClass;
+use Throwable;
 
 class ReceiptSourceService
 {
@@ -21,6 +23,65 @@ class ReceiptSourceService
     public function platform(): Connection
     {
         return DB::connection(config('receipts.platform_connection'));
+    }
+
+    public function logAcademicSearch(string $student, string $funding, ?int $year, int $visibleResults, int $userId): string
+    {
+        $reference = (string) Str::uuid();
+        $context = ['reference' => $reference, 'user_id' => $userId, 'student_id' => $student,
+            'requested_year' => $year, 'funding' => $funding, 'visible_results' => $visibleResults];
+        try {
+            [, $column] = self::fundingColumns($funding);
+            $rows = $this->platform()->table('public.cxc')->where('student_id', $student)
+                ->when($year !== null, fn ($query) => $query->orderByRaw('CASE WHEN syear = ? THEN 0 ELSE 1 END', [$year]))
+                ->orderByDesc('syear')->orderBy('id')->limit(101)->get(['id', 'syear', 'item_pago', 'monto', 'parciales', 'facturado', 'recibo']);
+            $balances = $this->platform()->table('public.saldo_pagos')->whereRaw('CAST(student_id AS VARCHAR) = ?', [$student])
+                ->orderBy('id_saldo')->get(['id_saldo', 'syear', 'mes', 'saldo', 'saldo_beca', 'saldo_bienhechor']);
+            $byPeriod = $balances->groupBy(fn ($row) => $row->syear.':'.$row->mes);
+            $context['student_exists'] = $this->platform()->table('public.students')->whereRaw('CAST(student_id AS VARCHAR) = ?', [$student])->exists();
+            $context['balance_column'] = $column;
+            $context['cxc_rows_truncated'] = $rows->count() > 100;
+            $context['balances'] = $balances->map(fn ($row) => (array) $row)->all();
+            $context['search_notes'] = [];
+            if ($rows->isEmpty()) {
+                $context['search_notes'][] = 'SIN_CXC: no hay registros de CXC para este carnet.';
+            } elseif ($year !== null && ! $rows->contains(fn ($row) => (int) $row->syear === $year)) {
+                $context['search_notes'][] = 'SIN_CXC_EN_ANIO: hay CXC, pero ninguna corresponde al año seleccionado.';
+            }
+            if (! $context['student_exists']) {
+                $context['search_notes'][] = 'ALUMNO_NO_ENCONTRADO: el carnet no existe en students; una CXC puede aparecer, pero no podrá seleccionarse como alumno válido.';
+            }
+            $context['cxc_rows'] = $rows->take(100)->map(function ($row) use ($byPeriod, $year, $column): array {
+                $reasons = [];
+                $month = ltrim((string) $row->item_pago, '0');
+                $matching = $row->syear === null || $month === '' ? collect() : $byPeriod->get($row->syear.':'.$month, collect());
+                if ($year !== null && (int) $row->syear !== $year) {
+                    $reasons[] = 'ANIO_FILTRADO: la CXC pertenece a otro año.';
+                }
+                if (! $row->facturado) {
+                    $reasons[] = 'NO_FACTURADA: facturado es false o NULL.';
+                }
+                if ($row->recibo) {
+                    $reasons[] = 'RECIBO_PAGADO: recibo es true.';
+                }
+                if (ReceiptMoney::cents($row->parciales ?? $row->monto ?? 0) <= 0) {
+                    $reasons[] = 'SIN_SALDO_CXC: parciales es cero o negativo; monto solo se usa cuando parciales es NULL.';
+                }
+                if ($matching->isEmpty()) {
+                    $reasons[] = 'SIN_SALDO_PAGOS: no coincide carnet, año y mes en saldo_pagos.';
+                } elseif (! $matching->contains(fn ($balance) => ReceiptMoney::cents($balance->{$column} ?? 0) > 0)) {
+                    $reasons[] = 'SIN_SALDO_FINANCIAMIENTO: '.$column.' no es mayor que cero.';
+                }
+
+                return (array) $row + ['matching_balance_ids' => $matching->pluck('id_saldo')->all(),
+                    'included_by_filters' => $reasons === [], 'exclusion_reasons' => $reasons];
+            })->all();
+            Log::info('CXC_ALUMNO_BUSQUEDA', $context);
+        } catch (Throwable $error) {
+            Log::warning('CXC_ALUMNO_DIAGNOSTICO_ERROR', $context + ['error_type' => $error::class]);
+        }
+
+        return $reference;
     }
 
     /** @return array{id: string, name: string, year: int, grade: ?string, section: ?string} */
