@@ -122,7 +122,15 @@ class ReceiptController extends Controller
         $this->enabled();
         abort_unless($request->user()->canAny(['libreria.recibos.crear', 'libreria.recibos.conciliar']), 403);
         $data = $request->validate(['q' => ['nullable', 'string', 'max:100'], 'year' => ['nullable', 'integer', 'between:2000,2100'],
-            'funding' => ['required', 'in:normal,beca,bienhechor'], 'page' => ['nullable', 'integer', 'min:1']]);
+            'funding' => ['required', 'in:normal,beca,bienhechor'], 'page' => ['nullable', 'integer', 'min:1'], 'diagnostic' => ['nullable', 'boolean']]);
+        if ($request->boolean('diagnostic')) {
+            $student = trim($data['q'] ?? '');
+            $sources->require(ctype_digit($student), 'Escribe el carnet completo, usando solo números, para consultar el diagnóstico.');
+
+            return response()->json(['diagnostic' => $sources->academicSearchDiagnostic($student, $data['funding'],
+                isset($data['year']) ? (int) $data['year'] : null, (int) $request->user()->id)])
+                ->header('Cache-Control', 'private, no-store, max-age=0');
+        }
         [, $balanceColumn] = ReceiptSourceService::fundingColumns($data['funding']);
         $query = $sources->platform()->table('public.cxc as c')->leftJoin('public.students as s', DB::raw('CAST(s.student_id AS VARCHAR)'), '=', 'c.student_id')
             ->join('public.saldo_pagos as b', function ($join): void {

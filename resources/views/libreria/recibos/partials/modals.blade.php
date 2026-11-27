@@ -7,9 +7,48 @@
             <x-catalog-select name="receipt-lookup-funding" label="Responsable" size="sm" :options="$receiptFundingChoices" :required="true" value="normal" x-show="lookupKind === 'academic_cxc'" x-model="lookupFunding" x-on:change="loadLookup()" x-effect="disabled = locked || selecting" />
             <flux:button size="sm" x-on:click="loadLookup()" x-bind:disabled="lookupLoading || selecting">Consultar</flux:button>
         </div>
+        <div x-show="lookupKind === 'academic_cxc'" x-cloak class="flex flex-wrap items-center justify-between gap-3">
+            <p class="text-xs text-zinc-500">¿No aparece el alumno? Escribe el carnet completo y consulta el motivo.</p>
+            <flux:button size="sm" icon="information-circle" x-on:click="diagnoseCxc()" x-bind:disabled="lookupLoading || selecting || diagnosticLoading">Ver diagnóstico</flux:button>
+        </div>
         <p x-show="notice" class="text-xs text-amber-700" role="status" x-text="notice"></p><p x-show="lookupLoading || selecting" class="text-xs text-zinc-500" role="status">Consultando…</p>
         <div class="max-h-[55dvh] overflow-auto rounded-xl border border-zinc-200"><table class="sale-workspace-table w-full text-left text-xs"><thead class="sticky top-0 bg-zinc-100 text-zinc-500"><tr><th>Nombre / Alumno</th><th x-show="lookupKind.includes('cxc')">Concepto / Factura</th><th x-show="lookupKind.includes('cxc')" class="text-right!">Facturado</th><th x-show="lookupKind.includes('cxc')" class="text-right!">Pendiente</th><th></th></tr></thead><tbody class="divide-y divide-zinc-200"><template x-for="row in lookupRows" :key="row.key || row.id"><tr><td><p class="text-sm font-medium" x-text="row.studentName || row.name"></p><p class="mt-1 font-mono text-[11px] text-zinc-500" x-text="row.studentId || row.document || ''"></p><p class="mt-1 text-[11px] text-zinc-500" x-show="row.payerName" x-text="row.payerName"></p></td><td x-show="lookupKind.includes('cxc')"><p class="break-all" x-text="row.invoice || row.name"></p><p class="mt-1 text-zinc-500" x-text="row.year || ''"></p></td><td x-show="lookupKind.includes('cxc')" class="text-right tabular-nums" x-text="money(cents(row.amount))"></td><td x-show="lookupKind.includes('cxc')" class="text-right font-semibold tabular-nums" x-text="money(cents(row.remaining))"></td><td><flux:button size="xs" x-on:click="choose(row)" x-bind:disabled="locked || selecting">Seleccionar</flux:button></td></tr></template></tbody></table><p x-show="!lookupLoading && !lookupRows.length" class="p-8 text-center text-xs text-zinc-500">No hay resultados disponibles.</p></div>
         <div class="flex items-center justify-end gap-3"><flux:button size="xs" x-on:click="loadLookup(lookupPage - 1)" x-bind:disabled="lookupLoading || lookupPage <= 1">Anterior</flux:button><span class="text-xs text-zinc-500" x-text="`${lookupPage} / ${lookupPages}`"></span><flux:button size="xs" x-on:click="loadLookup(lookupPage + 1)" x-bind:disabled="lookupLoading || lookupPage >= lookupPages">Siguiente</flux:button></div>
+    </div>
+</flux:modal>
+<flux:modal name="receipt-cxc-diagnostic" data-theme="light" class="sale-dialog sale-tuition-dialog" aria-labelledby="receipt-cxc-diagnostic-title">
+    <div class="space-y-5">
+        <div class="sale-modal-heading"><p class="sale-label">Consulta de solo lectura</p><h2 id="receipt-cxc-diagnostic-title" class="mt-1 text-xl font-semibold">Diagnóstico de CXC de alumno</h2><p class="mt-1 text-xs">Se consultan los datos del servidor donde estás trabajando.</p></div>
+        <p x-show="diagnosticLoading" role="status" class="text-sm">Consultando CXC y saldos académicos…</p>
+        <p x-show="diagnosticError" x-cloak role="alert" class="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800" x-text="diagnosticError"></p>
+        <template x-if="cxcDiagnostic">
+            <div class="max-h-[60dvh] space-y-4 overflow-y-auto">
+                <div class="rounded-xl border border-zinc-200 p-4 text-sm">
+                    <p><strong>Carnet:</strong> <span x-text="cxcDiagnostic.student_id"></span> · <strong>Año:</strong> <span x-text="cxcDiagnostic.requested_year || 'Todos'"></span> · <span x-text="fundingLabel(cxcDiagnostic.funding)"></span></p>
+                    <p class="mt-2 text-xs text-zinc-500">Entorno: <span x-text="cxcDiagnostic.environment"></span></p>
+                    <p class="mt-1 break-all font-mono text-xs">Referencia: <span x-text="cxcDiagnostic.reference"></span></p>
+                    <p x-show="cxcDiagnostic.logging_failed" class="mt-2 text-xs text-amber-700">No se pudo escribir en el log. El resultado de esta consulta sigue disponible aquí.</p>
+                </div>
+                <template x-if="cxcDiagnostic.complete">
+                    <div class="space-y-4">
+                        <template x-for="note in cxcDiagnostic.search_notes" :key="note"><p class="rounded-lg bg-amber-50 p-3 text-sm text-amber-900" x-text="diagnosticReason(note)"></p></template>
+                        <div class="overflow-x-auto rounded-xl border border-zinc-200">
+                            <table class="sale-workspace-table w-full text-left text-xs"><thead><tr><th>CXC / período</th><th class="text-right!">Facturado</th><th class="text-right!">Pendiente CXC</th><th>Resultado</th></tr></thead><tbody class="divide-y divide-zinc-200">
+                                <template x-for="row in cxcDiagnostic.cxc_rows" :key="row.id"><tr>
+                                    <td><p class="font-semibold" x-text="'#' + row.id"></p><p x-text="(row.syear || 'Sin año') + ' · Mes ' + row.item_pago"></p></td>
+                                    <td class="text-right tabular-nums" x-text="row.monto === null ? 'Sin dato' : money(cents(row.monto))"></td>
+                                    <td class="text-right tabular-nums"><span x-text="row.parciales === null && row.monto === null ? 'Sin dato' : money(cents(row.parciales ?? row.monto))"></span><p x-show="row.parciales === null && row.monto !== null" class="mt-1 text-zinc-500">Usa el monto original</p></td>
+                                    <td><p x-show="row.included_by_filters" class="font-medium text-emerald-700">Cumple los filtros del listado.</p><ul class="space-y-2"><template x-for="reason in row.exclusion_reasons" :key="reason"><li class="text-amber-800" x-text="diagnosticReason(reason)"></li></template></ul></td>
+                                </tr></template>
+                            </tbody></table>
+                        </div>
+                        <p x-show="cxcDiagnostic.cxc_rows_truncated" class="text-xs text-amber-700">Se muestran hasta 100 registros de CXC. Selecciona el año para dar prioridad a ese período.</p>
+                        <div><h3 class="mb-2 text-sm font-semibold">Saldos registrados en plataforma</h3><div class="overflow-x-auto rounded-xl border border-zinc-200"><table class="sale-workspace-table w-full text-left text-xs"><thead><tr><th>Año / mes</th><th class="text-right!">Familiar</th><th class="text-right!">Beca</th><th class="text-right!">Bienhechor</th></tr></thead><tbody class="divide-y divide-zinc-200"><template x-for="row in cxcDiagnostic.balances" :key="row.id_saldo"><tr><td x-text="row.syear + ' / ' + row.mes"></td><td class="text-right tabular-nums" x-text="row.saldo === null ? 'Sin dato' : money(cents(row.saldo))"></td><td class="text-right tabular-nums" x-text="row.saldo_beca === null ? 'Sin dato' : money(cents(row.saldo_beca))"></td><td class="text-right tabular-nums" x-text="row.saldo_bienhechor === null ? 'Sin dato' : money(cents(row.saldo_bienhechor))"></td></tr></template></tbody></table><p x-show="!cxcDiagnostic.balances.length" class="p-4 text-xs text-zinc-500">No hay registros en saldo_pagos para este carnet.</p></div></div>
+                    </div>
+                </template>
+            </div>
+        </template>
+        <div class="flex justify-end border-t border-zinc-200 pt-4"><flux:modal.close><flux:button variant="primary">Volver a la búsqueda</flux:button></flux:modal.close></div>
     </div>
 </flux:modal>
 <x-catalog-notice name="receipt-payment-excess" title="Confirma el monto recibido">

@@ -12,6 +12,7 @@ use App\Services\Libreria\ReceiptMoney;
 use App\Services\Libreria\ReceiptSourceService;
 use App\Services\Libreria\ReceiptTicketService;
 use Database\Seeders\ReceiptControlSeeder;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -639,6 +640,50 @@ test('academic CXC diagnostics distinguish missing debt and unknown students and
         && str_starts_with($context['search_notes'][1], 'ALUMNO_NO_ENCONTRADO:')
     ))->once();
     Log::shouldNotHaveReceived('warning');
+    Http::assertNothingSent();
+});
+
+test('explicit academic diagnostics show server exclusion reasons even when logging is unavailable without changing debts', function () {
+    prepareReceipts($this);
+    config(['app.env' => 'production']);
+    $debt = receiptAcademicDebt();
+    $platform = DB::connection('plataforma');
+    $platform->table('public.saldo_pagos')->update(['saldo' => 0, 'saldo_beca' => 50]);
+    $cxc = $platform->table('public.cxc')->get()->all();
+    $balances = $platform->table('public.saldo_pagos')->get()->all();
+    Log::shouldReceive('info')->once()->andThrow(new RuntimeException('Log unavailable'));
+
+    $result = $this->getJson(route('libreria.recibos.cxc', ['q' => '501', 'year' => 2025, 'funding' => 'normal', 'diagnostic' => '1']))
+        ->assertOk()->assertJsonPath('diagnostic.complete', true)->assertJsonPath('diagnostic.environment', 'production')
+        ->assertJsonPath('diagnostic.student_id', '501')->assertJsonPath('diagnostic.logging_failed', true)
+        ->assertJsonPath('diagnostic.cxc_rows.0.id', $debt['id'])->assertJsonPath('diagnostic.cxc_rows.0.included_by_filters', false)
+        ->assertJsonPath('diagnostic.balances.0.saldo', 0)->assertJsonPath('diagnostic.balances.0.saldo_beca', 50);
+
+    expect($result->json('diagnostic.reference'))->toBeUuid();
+    expect($result->headers->get('Cache-Control'))->toContain('no-store');
+    expect($result->json('diagnostic.cxc_rows.0.exclusion_reasons.0'))->toStartWith('SIN_SALDO_FINANCIAMIENTO:');
+    expect($platform->table('public.cxc')->get()->all())->toEqual($cxc);
+    expect($platform->table('public.saldo_pagos')->get()->all())->toEqual($balances);
+    $this->assertDatabaseCount('libreria.receipts', 0);
+    $this->get(route('libreria.recibos.index'))->assertOk()->assertSee('Ver diagnóstico')->assertSee('Diagnóstico de CXC de alumno');
+    Http::assertNothingSent();
+});
+
+test('explicit diagnostics validate a carnet enforce receipt access and distinguish query failures from missing debt', function () {
+    prepareReceipts($this);
+    Log::spy();
+    $this->getJson(route('libreria.recibos.cxc', ['q' => 'Alumno', 'funding' => 'normal', 'diagnostic' => 1]))
+        ->assertUnprocessable()->assertJsonValidationErrors('receipts');
+    DB::connection('plataforma')->statement('DROP TABLE public.saldo_pagos');
+
+    $result = $this->getJson(route('libreria.recibos.cxc', ['q' => '501', 'funding' => 'normal', 'diagnostic' => 1]))
+        ->assertOk()->assertJsonPath('diagnostic.complete', false)->assertJsonPath('diagnostic.error_type', QueryException::class);
+
+    expect($result->json('diagnostic.reference'))->toBeUuid();
+    Log::shouldHaveReceived('warning')->once()->with('CXC_ALUMNO_DIAGNOSTICO_ERROR', Mockery::on(fn (array $context): bool => $context['complete'] === false));
+    $this->actingAs(User::factory()->create());
+    $this->getJson(route('libreria.recibos.cxc', ['q' => '501', 'funding' => 'normal', 'diagnostic' => 1]))->assertForbidden();
+    Log::shouldNotHaveReceived('info');
     Http::assertNothingSent();
 });
 

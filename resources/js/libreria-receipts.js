@@ -7,6 +7,7 @@ export function createReceiptWorkspace(options = {}) {
         paymentExcess: null, paymentApproval: null,
         selection: null, selecting: false, selectionSequence: 0, invoices: [], invoiceQuery: '', invoiceChoice: '', academicItems: [],
         lookupKind: 'clients', lookupQuery: '', lookupYear: '', lookupFunding: 'normal', lookupRows: [], lookupPage: 1, lookupPages: 1, lookupLoading: false, lookupSequence: 0,
+        cxcDiagnostic: null, diagnosticLoading: false, diagnosticError: '', diagnosticSequence: 0,
         history: [], historyLoading: false, historyQuery: '', historyLegacy: false, historyPage: 1, historyPages: 1, historySequence: 0,
         get historyOrigin() { return this.historyLegacy ? 'legacy' : 'current'; },
         set historyOrigin(value) { this.historyLegacy = value === 'legacy'; },
@@ -69,6 +70,27 @@ export function createReceiptWorkspace(options = {}) {
             } catch (error) { if (sequence === this.lookupSequence) { this.lookupRows = []; this.notice = error.message; } }
             finally { if (sequence === this.lookupSequence) this.lookupLoading = false; }
         },
+        async diagnoseCxc() {
+            if (this.lookupKind !== 'academic_cxc' || this.diagnosticLoading || this.selecting) return;
+            const sequence = ++this.diagnosticSequence;
+            this.cxcDiagnostic = null; this.diagnosticError = ''; this.diagnosticLoading = true;
+            this.$flux.modal('receipt-cxc-diagnostic').show();
+            try {
+                const student = this.lookupQuery.trim();
+                if (!/^\d+$/.test(student)) throw new Error('Escribe el carnet completo, usando solo números, para consultar el diagnóstico.');
+                const url = new URL(options.cxcUrl, window.location.origin);
+                url.searchParams.set('q', student); url.searchParams.set('funding', this.lookupFunding);
+                url.searchParams.set('diagnostic', '1'); url.searchParams.set('_', String(Date.now()));
+                if (this.lookupYear) url.searchParams.set('year', this.lookupYear);
+                const result = await this.api(url);
+                if (sequence !== this.diagnosticSequence) return;
+                if (!result.diagnostic?.reference) throw new Error('El servidor no devolvió el diagnóstico. Comprueba que los cambios PHP estén desplegados y activos en producción.');
+                this.cxcDiagnostic = result.diagnostic;
+                if (!result.diagnostic.complete) this.diagnosticError = 'El servidor no pudo completar la consulta del diagnóstico. Conserva la referencia para revisar el error; esto no significa que el alumno no tenga CXC.';
+            } catch (error) { if (sequence === this.diagnosticSequence) this.diagnosticError = error.message; }
+            finally { if (sequence === this.diagnosticSequence) this.diagnosticLoading = false; }
+        },
+        diagnosticReason(value) { return String(value).replace(/^[A-Z_]+:\s*/, ''); },
         async choose(row) {
             if (this.locked || this.selecting) return;
             if (this.lookupKind === 'clients') {

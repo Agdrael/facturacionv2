@@ -27,9 +27,16 @@ class ReceiptSourceService
 
     public function logAcademicSearch(string $student, string $funding, ?int $year, int $visibleResults, int $userId): string
     {
+        return (string) $this->academicSearchDiagnostic($student, $funding, $year, $userId, $visibleResults)['reference'];
+    }
+
+    /** @return array<string, mixed> */
+    public function academicSearchDiagnostic(string $student, string $funding, ?int $year, int $userId, ?int $visibleResults = null): array
+    {
         $reference = (string) Str::uuid();
         $context = ['reference' => $reference, 'user_id' => $userId, 'student_id' => $student,
-            'requested_year' => $year, 'funding' => $funding, 'visible_results' => $visibleResults];
+            'requested_year' => $year, 'funding' => $funding, 'visible_results' => $visibleResults,
+            'environment' => config('app.env'), 'complete' => false];
         try {
             [, $column] = self::fundingColumns($funding);
             $rows = $this->platform()->table('public.cxc')->where('student_id', $student)
@@ -76,12 +83,21 @@ class ReceiptSourceService
                 return (array) $row + ['matching_balance_ids' => $matching->pluck('id_saldo')->all(),
                     'included_by_filters' => $reasons === [], 'exclusion_reasons' => $reasons];
             })->all();
-            Log::info('CXC_ALUMNO_BUSQUEDA', $context);
+            $context['complete'] = true;
         } catch (Throwable $error) {
-            Log::warning('CXC_ALUMNO_DIAGNOSTICO_ERROR', $context + ['error_type' => $error::class]);
+            $context['error_type'] = $error::class;
+        }
+        try {
+            if ($context['complete']) {
+                Log::info('CXC_ALUMNO_BUSQUEDA', $context);
+            } else {
+                Log::warning('CXC_ALUMNO_DIAGNOSTICO_ERROR', $context);
+            }
+        } catch (Throwable) {
+            $context['logging_failed'] = true;
         }
 
-        return $reference;
+        return $context;
     }
 
     /** @return array{id: string, name: string, year: int, grade: ?string, section: ?string} */

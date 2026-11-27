@@ -6,7 +6,7 @@ globalThis.window = { location: { origin: 'https://example.test' } };
 const { createReceiptWorkspace } = await import('./libreria-receipts.js');
 
 function workspace() {
-    const state = createReceiptWorkspace({ year: 2026, canCreate: true, recipientsUrl: '/people', storeUrl: '/receipts', prepareUrl: '/prepare',
+    const state = createReceiptWorkspace({ year: 2026, canCreate: true, recipientsUrl: '/people', storeUrl: '/receipts', prepareUrl: '/prepare', cxcUrl: '/academic-cxc',
         concepts: [{ id: 1, name: 'Constancia', price: '10.00', kind: 'normal', account: '5101' }], methods: [{ codigo: '01', valor: 'Efectivo' }, { codigo: '02', valor: 'Tarjeta' }] });
     state.$flux = { modal: () => ({ show() {}, close() {} }) };
     return state;
@@ -18,6 +18,46 @@ function normal(state) {
     state.selectConcept();
     state.exact();
 }
+
+test('explicit academic diagnostics request the selected server carnet and show results without changing receipt fields', async () => {
+    const state = workspace(); normal(state); const shown = [];
+    const original = structuredClone(state.form);
+    state.lookupKind = 'academic_cxc'; state.lookupQuery = ' 501 '; state.lookupYear = '2025'; state.lookupFunding = 'beca';
+    state.$flux = { modal: name => ({ show() { shown.push(name); }, close() {} }) };
+    state.api = async url => {
+        assert.equal(url.pathname, '/academic-cxc');
+        assert.equal(url.searchParams.get('diagnostic'), '1');
+        assert.equal(url.searchParams.get('q'), '501');
+        assert.equal(url.searchParams.get('year'), '2025');
+        assert.equal(url.searchParams.get('funding'), 'beca');
+        return { diagnostic: { reference: 'diag-1', complete: true, student_id: '501', cxc_rows: [] } };
+    };
+
+    await state.diagnoseCxc();
+
+    assert.deepEqual(shown, ['receipt-cxc-diagnostic']);
+    assert.equal(state.cxcDiagnostic.reference, 'diag-1');
+    assert.equal(state.diagnosticError, '');
+    assert.equal(state.diagnosticLoading, false);
+    assert.deepEqual(state.form, original);
+    assert.equal(state.diagnosticReason('SIN_CXC: No hay registros.'), 'No hay registros.');
+});
+
+test('academic diagnostics show input deployment and query errors instead of claiming that debt does not exist', async () => {
+    const state = workspace(); state.lookupKind = 'academic_cxc'; state.lookupQuery = 'Alumno'; let requests = 0;
+    state.api = async () => { requests++; return { data: [] }; };
+    await state.diagnoseCxc();
+    assert.equal(requests, 0);
+    assert.match(state.diagnosticError, /carnet completo/);
+    state.lookupQuery = '501';
+    await state.diagnoseCxc();
+    assert.equal(requests, 1);
+    assert.match(state.diagnosticError, /servidor no devolvió/);
+    state.api = async () => ({ diagnostic: { reference: 'diag-2', complete: false } });
+    await state.diagnoseCxc();
+    assert.equal(state.cxcDiagnostic.reference, 'diag-2');
+    assert.match(state.diagnosticError, /no significa que el alumno no tenga CXC/);
+});
 
 test('receipt excess requires approval and changed payments require another confirmation before one submission', async () => {
     const state = workspace(); normal(state);
