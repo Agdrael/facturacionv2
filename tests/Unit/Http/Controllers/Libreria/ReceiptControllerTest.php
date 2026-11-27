@@ -14,6 +14,7 @@ use App\Services\Libreria\ReceiptTicketService;
 use Database\Seeders\ReceiptControlSeeder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Tests\TestCase;
@@ -414,8 +415,10 @@ test('a verified legacy credit does not block a different academic funding or me
         'uid_dte' => $debt['uuid'], 'numero_dte' => 'DTE-LEGACY-2025', 'facturado' => true, 'lugar' => 'Colecturia/Recibo',
         'pago_beca' => $oldFunding === 'beca', 'pago_bienhechor' => $oldFunding === 'bienhechor']);
     $credits = app(ReceiptCreditService::class);
+    Log::spy();
 
     $credits->assertAcademicNotBilled('501', 2025, 2, $newFunding);
+    Log::shouldNotHaveReceived('warning');
     expect(fn () => $credits->assertAcademicNotBilled('501', 2025, 2, $oldFunding))->toThrow(ValidationException::class, 'ya está facturada');
 
     DB::table('libreria.ventas')->insert(['id' => 10, 'cliente_id' => 1, 'operacion' => '2', 'total' => 25, 'estado' => 'GENERADO']);
@@ -447,6 +450,38 @@ test('a verified legacy credit does not block a different academic funding or me
     Http::assertNothingSent();
 })->with([['normal', 'beca'], ['normal', 'bienhechor'], ['beca', 'normal']]);
 
+test('academic invoice discrepancies identify the student period amounts and matching log reference', function () {
+    $user = prepareReceipts($this);
+    $debt = receiptAcademicDebt('40.00');
+    DB::connection('plataforma')->table('public.detalle_pagos')->insert(['student_id' => '501', 'syear' => 2025, 'mes_pagado' => 2,
+        'monto' => 49, 'uid_dte' => $debt['uuid'], 'numero_dte' => 'DTE-LEGACY-2025', 'facturado' => true, 'lugar' => 'colecturia',
+        'pago_beca' => false, 'pago_bienhechor' => false]);
+    Log::spy();
+
+    try {
+        app(ReceiptCreditService::class)->assertAcademicNotBilled('501', 2025, 2, 'beca');
+        $this->fail('The inconsistent invoice must be blocked.');
+    } catch (ValidationException $exception) {
+        $message = $exception->errors()['receipts'][0];
+    }
+
+    expect($message)->toContain('CXC registra $50.00', 'se identificaron $49.00', 'Alumno: 501', 'Febrero 2025', 'Financiamiento solicitado: Beca', 'CXC #'.$debt['id']);
+    preg_match('/Referencia de diagnóstico: ([0-9a-f-]{36})/', $message, $matches);
+    $reference = $matches[1] ?? '';
+    expect($reference)->toBeUuid();
+    Log::shouldHaveReceived('warning')->once()->with('CXC_FACTURACION_BLOQUEADA', Mockery::on(fn (array $context): bool => $context['reference'] === $reference && $context['user_id'] === $user->id && $context['stage'] === 'sale_validation'
+        && $context['student_id'] === '501' && $context['year'] === 2025 && $context['month'] === 2
+        && $context['cxc_id'] === $debt['id'] && $context['requested_funding'] === ['beca']
+        && $context['verified_amount'] === '49.00' && $context['verified_funding'] === ['normal']
+        && $context['academic_details'][0]['uid_dte'] === $debt['uuid'] && $context['academic_details'][0]['monto'] === 49
+        && $context['legacy_invoices'][0]['numero_control'] === 'DTE-LEGACY-2025'
+        && ! isset($context['diagnostic_error_type'])
+    ));
+    $this->assertDatabaseHas('public.cxc', ['id' => $debt['id'], 'monto' => 50, 'parciales' => 40], 'plataforma');
+    $this->assertDatabaseCount('libreria.receipts', 0);
+    Http::assertNothingSent();
+});
+
 test('an unverified legacy funding still requires reconciliation before another invoice', function (string $problem) {
     prepareReceipts($this);
     $debt = receiptAcademicDebt();
@@ -468,7 +503,12 @@ test('an unverified legacy funding still requires reconciliation before another 
         $platform->table('public.detalle_pagos')->insert($detail);
     }
 
-    expect(fn () => app(ReceiptCreditService::class)->assertAcademicNotBilled('501', 2025, 2, 'beca'))->toThrow(ValidationException::class);
+    Log::spy();
+
+    expect(fn () => app(ReceiptCreditService::class)->assertAcademicNotBilled('501', 2025, 2, 'beca'))->toThrow(ValidationException::class, 'Referencia de diagnóstico:');
+    Log::shouldHaveReceived('warning')->once()->with('CXC_FACTURACION_BLOQUEADA', Mockery::on(fn (array $context): bool => $context['student_id'] === '501' && $context['requested_funding'] === ['beca']
+        && $context['cxc_id'] === $debt['id'] && $context['reason'] !== '' && ! isset($context['diagnostic_error_type'])
+    ));
 
     $this->assertDatabaseHas('public.cxc', ['id' => $debt['id'], 'monto' => 50, 'parciales' => null], 'plataforma');
     $this->assertDatabaseCount('libreria.receipt_obligations', 0);

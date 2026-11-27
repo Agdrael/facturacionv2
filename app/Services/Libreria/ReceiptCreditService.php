@@ -8,8 +8,11 @@ use Brick\Math\RoundingMode;
 use Illuminate\Database\Connection;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 use stdClass;
+use Throwable;
 
 class ReceiptCreditService
 {
@@ -171,11 +174,7 @@ class ReceiptCreditService
             $oldFace = $cxc === null ? 0 : ReceiptMoney::cents($cxc->monto);
             $oldRemaining = $cxc === null ? 0 : ReceiptMoney::cents($cxc->parciales ?? $cxc->monto);
             if (! $reverse && $cxc !== null && $oldFace > 0) {
-                $billing = $this->academicBilling($db, $cxc);
-                $this->sources->require($billing['amount'] === $oldFace, 'No se puede identificar el financiamiento de toda la CXC existente. Concilia sus facturas antes de emitir otra.');
-                foreach ($lines as $line) {
-                    $this->assertFundingNotBilled($billing['funding'], $line['claim']['financiamiento']);
-                }
+                $this->validateAcademicBilling($db, $cxc, array_column(array_column($lines, 'claim'), 'financiamiento'), 'credit_application');
             }
             if ($reverse && $cxc === null) {
                 continue;
@@ -274,18 +273,66 @@ class ReceiptCreditService
             return;
         }
         $cxc = $rows->first();
-        $billing = $this->academicBilling($this->sources->platform(), $cxc);
-        $this->assertFundingNotBilled($billing['funding'], $funding);
-        $this->sources->require($billing['amount'] === ReceiptMoney::cents($cxc->monto), 'No se puede identificar el financiamiento de toda la CXC existente. Concilia sus facturas antes de emitir otra.');
+        $this->validateAcademicBilling($this->sources->platform(), $cxc, [$funding], 'sale_validation');
+    }
+
+    /** @param list<string> $requestedFunding */
+    private function validateAcademicBilling(Connection $platform, stdClass $cxc, array $requestedFunding, string $stage): void
+    {
+        $billing = null;
+        try {
+            $billing = $this->academicBilling($platform, $cxc);
+            foreach ($requestedFunding as $funding) {
+                $this->assertFundingNotBilled($billing['funding'], $funding);
+            }
+            $this->sources->require($billing['amount'] === ReceiptMoney::cents($cxc->monto),
+                'La CXC registra $'.ReceiptMoney::decimal(ReceiptMoney::cents($cxc->monto)).', pero se identificaron $'.ReceiptMoney::decimal($billing['amount']).' en facturas por financiamiento. Revisa las facturas de origen y su clasificación antes de emitir otra.');
+        } catch (ValidationException $exception) {
+            $reference = (string) Str::uuid();
+            $reason = collect($exception->errors())->flatten()->implode(' ');
+            $context = ['reference' => $reference, 'stage' => $stage, 'user_id' => auth()->id(), 'cxc_id' => $cxc->id,
+                'student_id' => (string) $cxc->student_id, 'year' => (int) $cxc->syear, 'month' => (int) $cxc->item_pago,
+                'requested_funding' => $requestedFunding, 'cxc_amount' => (string) $cxc->monto, 'cxc_remaining' => $cxc->parciales,
+                'verified_amount' => $billing === null ? null : ReceiptMoney::decimal($billing['amount']), 'verified_funding' => $billing['funding'] ?? null,
+                'reason' => $reason];
+            try {
+                $context['native_obligations'] = $this->nativeObligations($cxc->id)->orderBy('id')->limit(50)->get(['id', 'amount', 'data'])->map(function ($row): array {
+                    $data = $this->sources->data($row);
+
+                    return ['id' => $row->id, 'amount' => $row->amount, 'funding' => $data['funding'] ?? null, 'journal_id' => $data['native_origin'] ?? null,
+                        'invoice_uuid' => $data['invoice']['uuid'] ?? null, 'invoice_number' => $data['invoice']['number'] ?? null];
+                })->all();
+                $details = $platform->table('public.detalle_pagos')->where('student_id', $cxc->student_id)->where('syear', $cxc->syear)->where('mes_pagado', (int) $cxc->item_pago)
+                    ->orderBy('id_detalle')->limit(50)->get(['id_detalle', 'uid_dte', 'numero_dte', 'monto', 'pago_beca', 'pago_bienhechor', 'facturado', 'lugar', 'estado']);
+                $context['academic_details'] = $details->map(fn ($row) => (array) $row)->all();
+                $references = $details->map(fn ($row) => mb_strtolower(trim((string) $row->uid_dte)))->filter(fn ($uuid) => Str::isUuid($uuid))->unique()->values()->all();
+                $context['legacy_invoices'] = $this->sources->legacy()->table('public.ventas')->whereIn(DB::raw('LOWER(TRIM(CAST(numero_factura AS TEXT)))'), $references)
+                    ->orderBy('id_venta')->limit(50)->get(['id_venta', 'numero_factura', 'numero_control', 'total', 'operacion', 'anulado', 'n_carnet'])->map(fn ($row) => (array) $row)->all();
+                $context['diagnostic_row_limit'] = 50;
+            } catch (Throwable $diagnosticError) {
+                $context['diagnostic_error_type'] = $diagnosticError::class;
+            }
+            Log::warning('CXC_FACTURACION_BLOQUEADA', $context);
+            $labels = array_map($this->fundingLabel(...), $requestedFunding);
+            $message = $reason.' Alumno: '.$cxc->student_id.'. Período: '.self::monthName((int) $cxc->item_pago).' '.$cxc->syear
+                .'. Financiamiento solicitado: '.implode(', ', $labels).'. CXC #'.$cxc->id.'. Referencia de diagnóstico: '.$reference.'.';
+
+            throw ValidationException::withMessages(['receipts' => $message]);
+        }
     }
 
     /** @param list<string> $billed */
     private function assertFundingNotBilled(array $billed, string $funding): void
     {
-        $label = match ($funding) {
-            'beca' => 'la beca', 'bienhechor' => 'el bienhechor', default => 'el responsable familiar',
-        };
+        $label = 'el financiamiento «'.$this->fundingLabel($funding).'»';
         $this->sources->require(! in_array($funding, $billed, true), 'La parte de esta cuota correspondiente a '.$label.' ya está facturada. Cobra su saldo mediante un recibo, sin emitir otro DTE.');
+    }
+
+    private function fundingLabel(string $funding): string
+    {
+        return match ($funding) {
+            'beca' => 'Beca', 'bienhechor' => 'Bienhechor', default => 'Responsable familiar',
+        };
     }
 
     /** @return array{amount: int, funding: list<string>} */
